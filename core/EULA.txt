@@ -1,0 +1,37 @@
+SURAT PERJANJIAN LISENSI PENGGUNA (End User License Agreement) - EasyLink SDK
+
+I. DEFINISI.
+1. "EasyLink SDK" adalah kumpulan fungsi atau perintah yang berkonsep instan untuk membantu pengembangan aplikasi yang mengintegrasikan mesin pembaca sidik jari dari Fingerspot ke aplikasi Pengembang.
+2. "HAKI" adalah hak atas kekayaan intelektual menyangkut semua hak paten, desain, model, kegunaan, hak cipta, tata cara penggunaan, rahasia dagang, merek dagang, merek jasa, dan hak kekayaan intelektual lainnya yang berhubungan dengan informasi teknis layanan.
+
+II. LISENSI.
+1. Seluruh desain, model, kegunaan, hak cipta, tata cara penggunaan, logo, nama aplikasi, dan merek dagang dan jasa EasyLink SDK adalah milik Fingerspot. Semua nama perusahaan dan produk lain mungkin merupakan merek dagang dari masing-masing perusahaan.
+2. Fingerspot hanya memberikan hak dan kewenangan kepada pengguna untuk menggunakan EasyLink SDK, TIDAK untuk membongkar, mengubah sebagian/seluruh isi, menambah isi aplikasi EasyLink SDK dalam bentuk apa pun atau kemudian menyusun ulang aplikasi EasyLink SDK dan menyebarkannya.
+3. Fingerspot membebaskan pengguna EasyLink SDK dari biaya yang ada selama penggunaannya bukan untuk kepentingan profit atau komersial, HANYA boleh digunakan untuk kepentingan internal pengguna dan  pengguna juga menggunakan mesin absensi merk Fingerspot yang dirancang khusus untuk EasyLink SDK.
+4. Setiap penggunaan Fingerspot Service WAJIB menggunakan mesin absensi merk Fingerspot yang dirancang khusus untuk EasyLink SDK.
+5. EasyLink SDK boleh disebarluaskan dan di-copy ke komputer lain selama tidak menambah atau mengurangi isi folder asli EasyLink SDK dan penyebarannya hanya untuk lingkungan pengguna mesin absensi merk Fingerspot yang dirancang khusus untuk EasyLink SDK.
+
+III. PELANGGARAN HAKI.
+1. Yang termasuk dalam pelanggaran HAKI milik Fingerspot adalah:
+a. Membongkar, mengubah sebagian/seluruh isi, menambah isi aplikasi EasyLink SDK dalam bentuk apa pun dan/atau kemudian menyusun ulang aplikasi EasyLink SDK.
+b. Menggunakan EasyLink SDK untuk kepentingan profit atau komersial.
+c. Menggunakan EasyLink SDK dengan tidak menggunakan mesin absensi merk Fingerspot.
+2. Fingerspot berhak untuk melakukan tuntutan terhadap setiap pelanggaran HAKI milik Fingerspot yang ditujukan sebagai ganti rugi yang ditimbulkan oleh Pengguna, dimana tidak  melepaskan Pengguna dari kewajiban melakukan ganti rugi.
+
+IV. RUANG LINGKUP
+1. Pengguna memahami bahwa EasyLink SDK tidaklah bebas dari kesalahan, bug, masalah performa, atau masalah keamanan aplikasi.
+2. Pengguna memahami bahwa segala kerusakan sistem komputer, perangkat, atau data yang terjadi jika menginstal atau menggunakan aplikasi EasyLink SDK adalah menjadi tanggung jawab pengguna.
+3. Pengguna secara tegas menyatakan setuju bahwa EasyLink SDK yang diberikan “sebagaimana adanya” dan “sebagaimana mestinya” dan bahwa penggunaannya merupakan resiko pengguna sendiri.
+4. Fingerspot tidak menjamin bahwa cacat dalam perangkat lunak akan diperbaiki atau bahwa perangkat lunak tersebut tersedia akan bebas dari virus atau komponen berbahaya lainnya.
+5. Fingerspot menyangkal semua jaminan dalam bentuk apapun, baik surat menyurat maupun tersirat, termasuk namun tidak terbatas pada,  jaminan diperdagangkan, kesesuaian untuk tujuan tertentu, bukan pelanggaran atas kekayaan intelektual lainnya atau pelanggaran hak Fingerspot.
+6. Fingerspot tidak bertanggung jawab atas semua hal yang timbul akibat penggunaan aplikasi EasyLink SDK.
+7. Fingerspot tidak bertanggung jawab atas apapun yang timbul karena hubungan Pengguna dengan pihak ketiga lainnya dan pelanggaran hukum yang dilakukan Pengguna yang terkait dengan aplikasi EasyLink SDK. Pengguna wajib memastikan bahwa seluruh kegiatan yang menggunakan EasyLink SDK adalah kegiatan legal dan tidak melanggar aturan dan hukum yang berlaku di Negara Kesatuan Republik Indonesia.
+
+V. CUSTOMER SUPPORT
+1. Layanan pelanggan Fingerspot tidak memberikan jaminan bahwa layanan akan memenuhi kebutuhan Pengguna atau bahwa layanan tidak akan terganggu, tepat waktu, aman atau bebas dari kesalahan.
+2. Layanan pelanggan Fingerspot tidak memberikan pernyataan atau jaminan atas hasil yang mungkin diperoleh dari penggunaan layanan, bahwa hasil yang mungkin diperoleh dari penggunaan tersebut akan akurat atau dapat diandalkan atau sesuai dengan harapan Pengguna. Namun layanan pelanggan Fingerspot akan berusaha memenuhi harapan Pengguna.
+3. Layanan pelanggan Fingerspot dapat diperoleh oleh Pengguna melaui online support yang disediakan di Fingerspot.com pada hari kerja dan jam kerja sebagai berikut:
+Senin – Jumat: pukul 08:30 – 17:00
+Sabtu: pukul 08:30 – 14:00
+
+Atau email ke info@fingerspot.com

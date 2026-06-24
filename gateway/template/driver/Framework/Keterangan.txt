@@ -1,0 +1,9 @@
+Catatan .Net Framework untuk tipe Windows :
+
+1. Windows XP : dotnetfx.exe
+
+2. Windows 7 32bit/64bit : dotNetFx35_WX_x86_x64.exe
+
+3. Windows 8 32bit/64bit : dotNetFx35_W8.1_x86_x64.exe
+
+4. Windows 10 32bit/64bit : dotNetFx35_WX_x86_x64.exe

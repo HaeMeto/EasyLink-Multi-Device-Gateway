@@ -1,0 +1,6 @@
+[setting]
+port=7110
+use_timeout=-1
+timeout=5000
+use_auto_restart=0
+val_auto_restart=23:00

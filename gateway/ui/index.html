@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1.0">
+ <title>EasyLink Gateway</title>
+ <script src="https://cdn.tailwindcss.com"></script>
+ <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+ <link rel="stylesheet" href="/css/app.css">
+</head>
+<body class="h-full bg-gray-100" x-data="app()" x-init="init()">
+
+<div x-show="toast.show" x-transition class="fixed top-4 right-4 z-50 px-4 py-2 rounded shadow-lg text-white text-sm"
+ :class="toast.type === 'error' ? 'bg-red-600' : 'bg-green-600'">
+ <span x-text="toast.msg"></span>
+</div>
+
+<div x-show="confirm.show" class="fixed inset-0 z-40 flex items-center justify-center bg-black/50">
+ <div class="bg-white rounded-lg shadow-xl w-96 p-6">
+ <h3 class="text-lg font-semibold mb-3" x-text="confirm.title"></h3>
+ <p class="text-gray-600 mb-6" x-text="confirm.msg"></p>
+ <div class="flex justify-end gap-2">
+ <button @click="confirm.show=false" class="px-4 py-2 text-sm text-gray-600 border rounded hover:bg-gray-100">Cancel</button>
+ <button @click="confirm.action(); confirm.show=false" class="px-4 py-2 text-sm text-white bg-red-600 rounded hover:bg-red-700">Confirm</button>
+ </div>
+ </div>
+</div>
+
+<div class="flex h-full">
+ <aside class="w-56 bg-gray-900 text-white flex flex-col flex-shrink-0">
+ <div class="p-4 text-lg font-bold border-b border-gray-700">EasyLink</div>
+ <nav class="flex-1 p-2 space-y-1">
+ <a href="#/" @click="navigate('#/')"
+ :class="route==='/' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'"
+ class="block px-3 py-2 rounded text-sm">Dashboard</a>
+ <a href="#/instances" @click="navigate('#/instances')"
+ :class="route==='/instances' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'"
+ class="block px-3 py-2 rounded text-sm">Instances</a>
+ <a href="#/devices" @click="navigate('#/devices')"
+ :class="route==='/devices' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'"
+ class="block px-3 py-2 rounded text-sm">Devices</a>
+ <a href="#/jobs" @click="navigate('#/jobs')"
+ :class="route==='/jobs' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'"
+ class="block px-3 py-2 rounded text-sm">Jobs</a>
+ <a href="#/logs" @click="navigate('#/logs')"
+ :class="route==='/logs' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'"
+ class="block px-3 py-2 rounded text-sm">Logs</a>
+ </nav>
+ <div class="p-3 border-t border-gray-700 text-xs text-gray-500">
+ <div>Running: <span class="text-green-400" x-text="store.health.running"></span></div>
+ <div>Error: <span class="text-red-400" x-text="store.health.error"></span></div>
+ </div>
+ </aside>
+
+ <main class="flex-1 overflow-auto p-6">
+
+ <div x-show="route==='/'" x-cloak>
+ <h1 class="text-2xl font-bold mb-4">Dashboard</h1>
+ <div class="grid grid-cols-4 gap-4 mb-6">
+ <div class="bg-white p-4 rounded shadow"><div class="text-sm text-gray-500">Total Instances</div><div class="text-2xl font-bold" x-text="store.health.total"></div></div>
+ <div class="bg-white p-4 rounded shadow"><div class="text-sm text-gray-500">Running</div><div class="text-2xl font-bold text-green-600" x-text="store.health.running"></div></div>
+ <div class="bg-white p-4 rounded shadow"><div class="text-sm text-gray-500">Errors</div><div class="text-2xl font-bold text-red-600" x-text="store.health.error"></div></div>
+ <div class="bg-white p-4 rounded shadow flex items-center justify-center">
+ <button @click="store.syncReload()" class="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700">Sync Reload</button>
+ </div>
+ </div>
+ <div class="bg-white p-4 rounded shadow">
+ <h2 class="font-semibold mb-2">Instances</h2>
+ <table class="w-full text-sm" x-show="store.health.instances && store.health.instances.length > 0">
+ <thead><tr class="text-left border-b"><th class="py-1">#</th><th>Status</th><th>Port</th><th>Alive</th><th>HTTP</th></tr></thead>
+ <tbody>
+ <template x-for="i in store.health.instances" :key="i.sdk_no">
+ <tr class="border-b"><td class="py-1" x-text="i.sdk_no"></td>
+ <td><span class="px-2 py-0.5 rounded text-xs text-white"
+ :class="i.status==='RUNNING'?'bg-green-600':i.status==='ERROR'?'bg-red-600':'bg-gray-500'"
+ x-text="i.status"></span></td>
+ <td x-text="i.port"></td>
+ <td><span class="text-xs" :class="i.alive?'text-green-600':'text-red-600'" x-text="i.alive?'Yes':'No'"></span></td>
+ <td><span class="text-xs" :class="i.http_ok?'text-green-600':'text-red-600'" x-text="i.http_ok?'Yes':'No'"></span></td>
+ </tr>
+ </template>
+ </tbody>
+ </table>
+ <div x-show="!store.health.instances || store.health.instances.length === 0" class="text-gray-400 text-sm py-4 text-center">No instances</div>
+ </div>
+ </div>
+
+ <div x-show="route==='/instances'" x-cloak>
+ <div class="flex justify-between items-center mb-4">
+ <h1 class="text-2xl font-bold">Instances</h1>
+ <button @click="createInstance.open=true" class="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700">+ Create</button>
+ </div>
+ <div class="bg-white rounded shadow overflow-hidden">
+ <table class="w-full text-sm">
+ <thead><tr class="text-left bg-gray-50 border-b"><th class="px-4 py-2">#</th><th>Name</th><th>Port</th><th>PID</th><th>Status</th><th>Restarts</th><th>Actions</th></tr></thead>
+ <tbody>
+ <template x-if="store.instances.length === 0"><tr><td colspan="7" class="px-4 py-8 text-center text-gray-400">No instances created. Click Create to add one.</td></tr></template>
+ <template x-for="i in store.instances" :key="i.sdk_no">
+ <tr class="border-b"><td class="px-4 py-2" x-text="i.sdk_no"></td>
+ <td x-text="i.name"></td><td x-text="i.port"></td><td x-text="i.pid"></td>
+ <td><span class="px-2 py-0.5 rounded text-xs text-white"
+ :class="i.status==='RUNNING'?'bg-green-600':i.status==='ERROR'?'bg-red-600':'bg-gray-500'"
+ x-text="i.status"></span></td>
+ <td x-text="i.restart_count"></td>
+ <td class="space-x-1">
+ <button @click="store.startInstance(i.sdk_no)" :disabled="i.status==='RUNNING'"
+ class="px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50">Start</button>
+ <button @click="store.stopInstance(i.sdk_no)" :disabled="i.status!=='RUNNING'"
+ class="px-2 py-1 text-xs bg-yellow-600 text-white rounded hover:bg-yellow-700 disabled:opacity-50">Stop</button>
+ <button @click="store.restartInstance(i.sdk_no)" :disabled="i.status!=='RUNNING'"
+ class="px-2 py-1 text-xs bg-orange-600 text-white rounded hover:bg-orange-700 disabled:opacity-50">Restart</button>
+ <button @click="confirmDelete('instance', i.sdk_no)"
+ class="px-2 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700">Del</button>
+ </td></tr>
+ </template>
+ </tbody>
+ </table>
+ </div>
+
+ <div x-show="createInstance.open" class="fixed inset-0 z-30 flex items-center justify-center bg-black/50">
+ <div class="bg-white rounded-lg shadow-xl w-96 p-6">
+ <h2 class="text-lg font-semibold mb-4">Create Instance</h2>
+ <div class="space-y-3">
+ <div><label class="block text-sm text-gray-600">SDK No</label><input x-model.number="createInstance.sdkNo" class="w-full border rounded px-3 py-1.5 text-sm"></div>
+ <div><label class="block text-sm text-gray-600">Port (optional)</label><input x-model.number="createInstance.port" class="w-full border rounded px-3 py-1.5 text-sm"></div>
+ </div>
+ <div class="flex justify-end gap-2 mt-4">
+ <button @click="createInstance.open=false" class="px-4 py-1.5 text-sm text-gray-600 border rounded">Cancel</button>
+ <button @click="doCreateInstance()" class="px-4 py-1.5 text-sm text-white bg-blue-600 rounded">Create</button>
+ </div>
+ </div>
+ </div>
+ </div>
+
+ <div x-show="route==='/devices'" x-cloak>
+ <div class="flex justify-between items-center mb-4">
+ <h1 class="text-2xl font-bold">Devices</h1>
+ <button @click="openDeviceForm()" class="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700">+ Add</button>
+ </div>
+ <div class="bg-white rounded shadow overflow-hidden">
+ <table class="w-full text-sm">
+	 <thead><tr class="text-left bg-gray-50 border-b"><th class="px-4 py-2">ID</th><th>Name</th><th>SN</th><th>IP</th><th>Instance</th><th>Status</th><th>Enabled</th><th>Actions</th></tr></thead>
+	 <tbody>
+	 <template x-if="store.devices.length === 0"><tr><td colspan="8" class="px-4 py-8 text-center text-gray-400">No devices. Click Add to register one.</td></tr></template>
+	 <template x-for="d in store.devices" :key="d.id">
+	 <tr class="border-b"><td class="px-4 py-2" x-text="d.id"></td>
+	 <td x-text="d.name"></td><td x-text="d.sn"></td><td x-text="d.ip"></td>
+	 <td x-text="d.sdk_no"></td>
+	 <td><span class="px-2 py-0.5 rounded text-xs text-white"
+	 :class="d.online ? 'bg-green-600' : 'bg-red-600'"
+	 x-text="d.online ? 'Online' : 'Offline'"></span></td>
+	 <td>
+	  <input type="checkbox" :checked="d.enabled === 1"
+	   @change="toggleDeviceEnabled(d)"
+	   class="w-4 h-4 cursor-pointer accent-blue-600">
+	 </td>
+	 <td class="space-x-1">
+ <button @click="navigate('#/devices/'+d.sn)" class="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700">Info</button>
+ <button @click="openDeviceForm(d)" class="px-2 py-1 text-xs bg-yellow-600 text-white rounded hover:bg-yellow-700">Edit</button>
+ <button @click="confirmDelete('device', d.id)" class="px-2 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700">Del</button>
+ </td></tr>
+ </template>
+ </tbody>
+ </table>
+ </div>
+
+ <div x-show="deviceForm.open" class="fixed inset-0 z-30 flex items-center justify-center bg-black/50">
+ <div class="bg-white rounded-lg shadow-xl w-[500px] max-h-[90vh] overflow-auto p-6">
+ <h2 class="text-lg font-semibold mb-4" x-text="deviceForm.editing ? 'Edit Device' : 'Add Device'"></h2>
+ <div class="space-y-2">
+ <div><label class="block text-xs text-gray-500">Name</label><input x-model="deviceForm.name" class="w-full border rounded px-2 py-1 text-sm"></div>
+ <div><label class="block text-xs text-gray-500">SN *</label><input x-model="deviceForm.sn" class="w-full border rounded px-2 py-1 text-sm"></div>
+ <div><label class="block text-xs text-gray-500">Activation</label><input x-model="deviceForm.activation" class="w-full border rounded px-2 py-1 text-sm"></div>
+ <div><label class="block text-xs text-gray-500">Password</label><input x-model="deviceForm.password" class="w-full border rounded px-2 py-1 text-sm"></div>
+ <div><label class="block text-xs text-gray-500">IP</label><input x-model="deviceForm.ip" class="w-full border rounded px-2 py-1 text-sm"></div>
+ <div><label class="block text-xs text-gray-500">Port</label><input x-model="deviceForm.ethernet_port" class="w-full border rounded px-2 py-1 text-sm"></div>
+  <div><label class="block text-xs text-gray-500">Instance #</label><input x-model.number="deviceForm.sdk_no" class="w-full border rounded px-2 py-1 text-sm"></div>
+  <div class="flex items-center gap-2 pt-1">
+   <input type="checkbox" x-model="deviceForm.enabled" class="w-4 h-4 accent-blue-600">
+   <label class="text-xs text-gray-500">Enabled</label>
+  </div>
+ </div>
+ <div class="flex justify-end gap-2 mt-4">
+ <button @click="deviceForm.open=false" class="px-4 py-1.5 text-sm text-gray-600 border rounded">Cancel</button>
+ <button @click="doSaveDevice()" class="px-4 py-1.5 text-sm text-white bg-blue-600 rounded">Save</button>
+ </div>
+ </div>
+ </div>
+ </div>
+
+ <div x-show="isDeviceDetail()" x-cloak>
+ <h1 class="text-2xl font-bold mb-4">Device: <span x-text="deviceDetail.sn"></span></h1>
+ <div class="grid grid-cols-2 gap-4 mb-6">
+ <div class="bg-white p-4 rounded shadow">
+ <dl class="text-sm space-y-1"><dt class="text-gray-500">SN</dt><dd class="font-mono" x-text="deviceDetail.sn"></dd>
+ <dt class="text-gray-500">Name</dt><dd x-text="deviceDetail.name"></dd>
+ <dt class="text-gray-500">IP</dt><dd x-text="deviceDetail.ip"></dd>
+ <dt class="text-gray-500">Port</dt><dd x-text="deviceDetail.ethernet_port"></dd>
+ <dt class="text-gray-500">Instance</dt><dd x-text="deviceDetail.sdk_no"></dd></dl>
+ </div>
+ <div class="bg-white p-4 rounded shadow">
+ <h3 class="font-semibold mb-2 text-sm">Operations</h3>
+ <div class="space-y-1">
+ <button @click="store.deviceOp(deviceDetail.sn,'dev/info')" class="w-full text-left px-3 py-1.5 text-sm border rounded hover:bg-blue-50">Device Info</button>
+ <button @click="store.deviceOp(deviceDetail.sn,'dev/settime')" class="w-full text-left px-3 py-1.5 text-sm border rounded hover:bg-blue-50">Set Time</button>
+ <button @click="store.deviceOp(deviceDetail.sn,'dev/init')" class="w-full text-left px-3 py-1.5 text-sm border rounded hover:bg-blue-50">Init</button>
+ <button @click="store.deviceOp(deviceDetail.sn,'dev/deladmin')" class="w-full text-left px-3 py-1.5 text-sm border rounded hover:bg-blue-50">Del Admin</button>
+ <button @click="store.deviceOp(deviceDetail.sn,'scanlog/new')" class="w-full text-left px-3 py-1.5 text-sm border rounded hover:bg-blue-50">Scanlog New</button>
+ <button @click="store.deviceOp(deviceDetail.sn,'scanlog/all')" class="w-full text-left px-3 py-1.5 text-sm border rounded hover:bg-blue-50">Scanlog All</button>
+ <button @click="store.deviceOp(deviceDetail.sn,'user/all')" class="w-full text-left px-3 py-1.5 text-sm border rounded hover:bg-blue-50">User All</button>
+ <button @click="store.deviceOp(deviceDetail.sn,'log/del')" class="w-full text-left px-3 py-1.5 text-sm border rounded hover:bg-blue-50">Log Del</button>
+ </div>
+ </div>
+ </div>
+ <div x-show="opResult" class="bg-gray-900 text-green-400 p-4 rounded text-xs font-mono overflow-auto max-h-96">
+ <pre x-text="opResult"></pre>
+ </div>
+ </div>
+
+ <div x-show="route==='/jobs'" x-cloak>
+ <h1 class="text-2xl font-bold mb-4">Jobs</h1>
+ <div class="bg-white rounded shadow overflow-hidden">
+ <table class="w-full text-sm">
+ <thead><tr class="text-left bg-gray-50 border-b"><th class="px-4 py-2">ID</th><th>SN</th><th>Action</th><th>Status</th><th>Created</th></tr></thead>
+ <tbody>
+ <template x-if="store.jobs.length===0"><tr><td colspan="5" class="px-4 py-8 text-center text-gray-400">No jobs recorded</td></tr></template>
+ <template x-for="j in store.jobs" :key="j.id">
+ <tr class="border-b"><td class="px-4 py-2" x-text="j.id"></td>
+ <td x-text="j.sn"></td><td x-text="j.action"></td>
+ <td><span class="px-2 py-0.5 rounded text-xs text-white"
+ :class="j.status==='DONE'?'bg-green-600':j.status==='ERROR'?'bg-red-600':'bg-yellow-600'"
+ x-text="j.status"></span></td>
+ <td x-text="j.created_at"></td></tr>
+ </template>
+ </tbody>
+ </table>
+ </div>
+ </div>
+
+ <div x-show="route==='/logs'" x-cloak>
+ <h1 class="text-2xl font-bold mb-4">Console Logs</h1>
+ <div class="bg-gray-900 text-green-400 font-mono text-xs p-4 overflow-y-auto rounded" style="height:calc(100vh-12rem)" x-ref="logContainer">
+ <template x-if="store.logs.length===0"><div class="text-gray-500">No logs yet</div></template>
+ <template x-for="l in store.logs" :key="l.id">
+ <div class="py-0.5 flex gap-2">
+ <span class="text-gray-500" x-text="l.timestamp"></span>
+ <span class="font-semibold" :class="l.type === 'instance' ? 'text-blue-400' : l.type === 'device' ? 'text-yellow-400' : l.type === 'proxy' ? 'text-green-400' : l.type === 'watchdog' ? 'text-red-400' : 'text-gray-400'" x-text="'['+l.type+']'"></span>
+ <span x-text="l.message"></span>
+ </div>
+ </template>
+ </div>
+ </div>
+
+ </main>
+</div>
+
+<template x-if="!loaded">
+ <div class="fixed inset-0 flex items-center justify-center bg-white">
+ <div class="text-gray-400">Loading...</div>
+ </div>
+</template>
+
+<script src="/js/app.js"></script>
+</body>
+</html>

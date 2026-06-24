@@ -1,0 +1,5 @@
+.codenomad/
+sample_code/
+
+instances/**/*
+!instances/**/.gitkeep
