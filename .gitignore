@@ -12,3 +12,5 @@ instances/**/*
 test-screenshots/
 agent-*.md
 *.bak
+db_backup/
+logs/
