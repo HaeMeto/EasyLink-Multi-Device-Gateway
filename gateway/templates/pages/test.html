@@ -1,0 +1,33 @@
+{{define "test"}}
+<h1 class="text-2xl font-bold mb-4">Testing</h1>
+<div class="bg-white rounded shadow p-4 mb-4">
+<div class="flex items-center gap-4 flex-wrap">
+<div class="flex items-center gap-2">
+<span class="text-sm text-gray-600">Device:</span>
+<select x-model="testPage.sn" class="border rounded px-2 py-1 text-sm min-w-[200px]">
+<option value="">-- Select --</option>
+<template x-for="d in store.devices" :key="d.sn">
+<option :value="d.sn" x-text="d.sn + ' - ' + d.name"></option>
+</template>
+</select>
+</div>
+<div class="flex items-center gap-2">
+<span class="text-sm text-gray-600">Instance:</span>
+<select x-model="testPage.sdkNo" class="border rounded px-2 py-1 text-sm min-w-[160px]">
+<option value="">-- Select --</option>
+<template x-for="i in store.instances" :key="i.sdk_no">
+<option :value="i.sdk_no" x-text="'sdk-'+i.sdk_no+' :'+i.port+' '+i.status"></option>
+</template>
+</select>
+</div>
+</div>
+</div>
+<div class="bg-white rounded shadow p-4 mb-4" x-show="testPage.sn">
+<button @click="store.runDeviceInfo()" :disabled="testPage.loading" class="px-4 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">Device Info</button>
+<div x-show="testPage.result" class="mt-4 bg-gray-900 text-green-400 p-4 rounded text-xs font-mono overflow-auto max-h-96">
+<pre x-text="testPage.result"></pre>
+</div>
+<div x-show="testPage.loading" class="text-gray-400 text-sm py-4 mt-2">Loading...</div>
+<div x-show="!testPage.result && !testPage.loading" class="text-gray-400 text-sm py-4 mt-2">Select a device and instance, then click Device Info.</div>
+</div>
+{{end}}

@@ -1,0 +1,46 @@
+{{define "instances"}}
+<div class="flex justify-between items-center mb-4">
+<h1 class="text-2xl font-bold">Instances</h1>
+<button @click="createInstance.open=true" class="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700">+ Create</button>
+</div>
+<div class="bg-white rounded shadow overflow-hidden">
+<table class="w-full text-sm">
+<thead><tr class="text-left bg-gray-50 border-b"><th class="px-4 py-2">#</th><th>Name</th><th>Port</th><th>PID</th><th>Status</th><th>Restarts</th><th>Actions</th></tr></thead>
+<tbody>
+<template x-if="store.instances.length === 0"><tr><td colspan="7" class="px-4 py-8 text-center text-gray-400">No instances created. Click Create to add one.</td></tr></template>
+<template x-for="i in store.instances" :key="i.sdk_no">
+<tr class="border-b"><td class="px-4 py-2" x-text="i.sdk_no"></td>
+<td x-text="i.name"></td><td x-text="i.port"></td><td x-text="i.pid"></td>
+<td><span class="px-2 py-0.5 rounded text-xs text-white"
+:class="i.status==='RUNNING'?'bg-green-600':i.status==='ERROR'?'bg-red-600':'bg-gray-500'"
+x-text="i.status"></span></td>
+<td x-text="i.restart_count"></td>
+<td class="space-x-1">
+<button @click="store.startInstance(i.sdk_no)" :disabled="i.status==='RUNNING'"
+class="px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50">Start</button>
+<button @click="store.stopInstance(i.sdk_no)" :disabled="i.status!=='RUNNING'"
+class="px-2 py-1 text-xs bg-yellow-600 text-white rounded hover:bg-yellow-700 disabled:opacity-50">Stop</button>
+<button @click="store.restartInstance(i.sdk_no)" :disabled="i.status!=='RUNNING'"
+class="px-2 py-1 text-xs bg-orange-600 text-white rounded hover:bg-orange-700 disabled:opacity-50">Restart</button>
+<button @click="confirmDelete('instance', i.sdk_no)"
+class="px-2 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700">Del</button>
+</td></tr>
+</template>
+</tbody>
+</table>
+</div>
+
+<div x-show="createInstance.open" class="fixed inset-0 z-30 flex items-center justify-center bg-black/50">
+<div class="bg-white rounded-lg shadow-xl w-96 p-6">
+<h2 class="text-lg font-semibold mb-4">Create Instance</h2>
+<div class="space-y-3">
+<div><label class="block text-sm text-gray-600">SDK No</label><input x-model.number="createInstance.sdkNo" class="w-full border rounded px-3 py-1.5 text-sm"></div>
+<div><label class="block text-sm text-gray-600">Port (optional)</label><input x-model.number="createInstance.port" class="w-full border rounded px-3 py-1.5 text-sm"></div>
+</div>
+<div class="flex justify-end gap-2 mt-4">
+<button @click="createInstance.open=false" class="px-4 py-1.5 text-sm text-gray-600 border rounded">Cancel</button>
+<button @click="doCreateInstance()" class="px-4 py-1.5 text-sm text-white bg-blue-600 rounded">Create</button>
+</div>
+</div>
+</div>
+{{end}}

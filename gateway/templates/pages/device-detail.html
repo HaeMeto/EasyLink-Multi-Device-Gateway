@@ -1,0 +1,28 @@
+{{define "device-detail"}}
+<h1 class="text-2xl font-bold mb-4">Device: <span x-text="deviceDetail.sn"></span></h1>
+<div class="grid grid-cols-2 gap-4 mb-6">
+<div class="bg-white p-4 rounded shadow">
+<dl class="text-sm space-y-1"><dt class="text-gray-500">SN</dt><dd class="font-mono" x-text="deviceDetail.sn"></dd>
+<dt class="text-gray-500">Name</dt><dd x-text="deviceDetail.name"></dd>
+<dt class="text-gray-500">IP</dt><dd x-text="deviceDetail.ip"></dd>
+<dt class="text-gray-500">Port</dt><dd x-text="deviceDetail.ethernet_port"></dd>
+<dt class="text-gray-500">Instance</dt><dd x-text="deviceDetail.sdk_no"></dd></dl>
+</div>
+<div class="bg-white p-4 rounded shadow">
+<h3 class="font-semibold mb-2 text-sm">Operations</h3>
+<div class="space-y-1">
+<button @click="store.deviceOp(deviceDetail.sn,'dev/info')" class="w-full text-left px-3 py-1.5 text-sm border rounded hover:bg-blue-50">Device Info</button>
+<button @click="store.deviceOp(deviceDetail.sn,'dev/settime')" class="w-full text-left px-3 py-1.5 text-sm border rounded hover:bg-blue-50">Set Time</button>
+<button @click="store.deviceOp(deviceDetail.sn,'dev/init')" class="w-full text-left px-3 py-1.5 text-sm border rounded hover:bg-blue-50">Init</button>
+<button @click="store.deviceOp(deviceDetail.sn,'dev/deladmin')" class="w-full text-left px-3 py-1.5 text-sm border rounded hover:bg-blue-50">Del Admin</button>
+<button @click="store.deviceOp(deviceDetail.sn,'scanlog/new')" class="w-full text-left px-3 py-1.5 text-sm border rounded hover:bg-blue-50">Scanlog New</button>
+<button @click="store.deviceOp(deviceDetail.sn,'scanlog/all')" class="w-full text-left px-3 py-1.5 text-sm border rounded hover:bg-blue-50">Scanlog All</button>
+<button @click="window.location.href='/users?sn='+encodeURIComponent(deviceDetail.sn)" class="w-full text-left px-3 py-1.5 text-sm border rounded hover:bg-blue-50">User All</button>
+<button @click="store.deviceOp(deviceDetail.sn,'log/del')" class="w-full text-left px-3 py-1.5 text-sm border rounded hover:bg-blue-50">Log Del</button>
+</div>
+</div>
+</div>
+<div x-show="opResult" class="bg-gray-900 text-green-400 p-4 rounded text-xs font-mono overflow-auto max-h-96">
+<pre x-text="opResult"></pre>
+</div>
+{{end}}

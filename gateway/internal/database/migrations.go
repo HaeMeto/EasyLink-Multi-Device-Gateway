@@ -2,7 +2,7 @@ package database
 
 import "fmt"
 
-const currentVersion = 4
+const currentVersion = 6
 
 func (db *DB) Migrate() error {
  _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_version (
@@ -39,6 +39,10 @@ func (db *DB) runMigration(version int) error {
 		err = db.migrateV3()
 	case 4:
 		err = db.migrateV4()
+	case 5:
+		err = db.migrateV5()
+	case 6:
+		err = db.migrateV6()
 	default:
  return fmt.Errorf("unknown migration version %d", version)
  }
@@ -153,4 +157,22 @@ func (db *DB) migrateV4() error {
 	}
 	_, err = db.Exec(`ALTER TABLE devices ADD COLUMN last_offline TEXT`)
 	return err
+}
+
+func (db *DB) migrateV5() error {
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS config (
+		key   TEXT PRIMARY KEY,
+		value TEXT NOT NULL,
+		updated_at TEXT DEFAULT (datetime('now'))
+	)`)
+	if err != nil {
+		return err
+	}
+ _, err = db.Exec(`INSERT OR IGNORE INTO config (key, value) VALUES ('scanlog_sync_interval', '60')`)
+ return err
+}
+
+func (db *DB) migrateV6() error {
+ _, err := db.Exec(`INSERT OR IGNORE INTO config (key, value) VALUES ('user_sync_limit', '30')`)
+ return err
 }

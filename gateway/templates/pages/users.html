@@ -1,0 +1,112 @@
+{{define "users"}}
+<h1 class="text-2xl font-bold mb-4">Users</h1>
+<div class="bg-white rounded shadow p-4 mb-4">
+<div class="flex items-center gap-4 flex-wrap">
+<div class="flex items-center gap-2">
+<span class="text-sm text-gray-600">Device:</span>
+<select x-model="usersPage.sn" @change="store.onUsersDeviceChange()" class="border rounded px-2 py-1 text-sm min-w-[200px]">
+<option value="">-- Select --</option>
+<template x-for="d in store.devices" :key="d.sn">
+<option :value="d.sn" x-text="d.sn + ' - ' + d.name"></option>
+</template>
+</select>
+</div>
+<div class="flex items-center gap-2" x-show="usersPage.sn">
+<span class="text-sm text-gray-600">Instance:</span>
+<select x-model="usersPage.sdkNo" class="border rounded px-2 py-1 text-sm min-w-[160px]">
+<option value="">-- Auto --</option>
+<template x-for="i in store.instances" :key="i.sdk_no">
+<option :value="i.sdk_no" x-text="'sdk-'+i.sdk_no+' :'+i.port+' '+i.status"></option>
+</template>
+</select>
+</div>
+<button @click="store.doCompareUsers()"
+:disabled="!usersPage.sn || usersPage.comparing"
+class="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50">
+<span x-show="!usersPage.comparing">Compare</span>
+<span x-show="usersPage.comparing">Comparing...</span>
+</button>
+</div>
+</div>
+<div class="bg-white rounded shadow p-3 mb-4" x-show="usersPage.sn">
+<div class="flex items-center gap-4 flex-wrap">
+<span class="px-2 py-0.5 rounded text-xs text-white"
+:class="usersPage.status.user_status === 'syncing' ? 'bg-blue-600' :
+usersPage.status.user_status === 'stale' ? 'bg-red-600' : 'bg-green-600'"
+x-text="usersPage.status.user_status || 'idle'"></span>
+<span class="text-sm">
+<span class="text-gray-500">Synced:</span>
+<span class="font-semibold" x-text="usersPage.compare.users?.local ?? 0"></span>
+<span class="text-gray-400">/</span>
+<span class="font-semibold" x-text="usersPage.compare.users?.device ?? '-'"></span>
+</span>
+<div class="w-28 h-2 bg-gray-200 rounded-full overflow-hidden"
+x-show="usersPage.compare.users?.device > 0">
+<div class="h-full bg-blue-600 rounded-full transition-all duration-700"
+:style="'width:' + Math.min(100, Math.round((usersPage.compare.users?.local||0) / usersPage.compare.users?.device * 100)) + '%'"></div>
+</div>
+<span class="text-xs"
+x-show="usersPage.compare.users?.device > 0"
+:class="usersPage.compare.users?.synced ? 'text-green-600' : 'text-yellow-600'"
+x-text="usersPage.compare.users?.synced ? 'Synced' : 'Mismatch'"></span>
+ <span class="text-xs text-gray-500"
+ x-show="usersPage.status.last_user_sync"
+ x-text="'Last: '+usersPage.status.last_user_sync"></span>
+ <div class="flex items-center gap-1">
+ <span class="text-xs text-gray-500">Limit:</span>
+ <select x-model="usersPage.syncLimit" @change="store.saveUserSyncLimit()" class="border rounded px-1 py-0.5 text-xs">
+ <option value="15">15</option>
+ <option value="30">30</option>
+ <option value="50">50</option>
+ <option value="100">100</option>
+ </select>
+ </div>
+ <button @click="store.doSyncUsers()"
+ :disabled="!usersPage.sn || usersPage.syncing || usersPage.compare.users?.synced"
+class="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
+<span x-show="!usersPage.syncing">Sync Now</span>
+<span x-show="usersPage.syncing">Syncing...</span>
+</button>
+</div>
+</div>
+<div class="bg-white rounded shadow overflow-hidden" x-show="usersPage.sn">
+<table class="w-full text-sm">
+<thead><tr class="text-left bg-gray-50 border-b"><th class="px-4 py-2">PIN</th><th>Name</th><th>RFID</th><th>Privilege</th><th>Tmpl</th></tr></thead>
+<tbody>
+<template x-if="usersPage.data.length===0"><tr><td colspan="5" class="px-4 py-8 text-center text-gray-400">No user data. Click Sync Now to fetch.</td></tr></template>
+<template x-for="u in usersPage.data" :key="u.id">
+<tr class="border-b"><td class="px-4 py-2" x-text="u.pin"></td>
+<td x-text="u.name"></td><td x-text="u.rfid"></td><td x-text="u.privilege"></td>
+<td><button @click="if(!u._expanded){store.fetchUserTemplates(usersPage.sn,u.pin).then(t=>{u._templates=t||[];u._expanded=true})}else{u._expanded=false}" class="text-xs text-blue-600 hover:underline" x-text="u._expanded ? 'Hide' : 'Expand'"></button></td></tr>
+<tr x-show="u._expanded"><td colspan="5" class="px-4 py-2 bg-gray-50 text-xs">
+<template x-if="u._templates && u._templates.length > 0">
+<div class="space-y-1">
+<template x-for="t in u._templates" :key="t.finger_idx">
+<div class="flex gap-4"><span x-text="'Finger '+t.finger_idx"></span><span x-text="'Alg '+t.alg_ver"></span><span class="font-mono truncate max-w-xs" x-text="t.template"></span></div>
+</template>
+</div>
+</template>
+<template x-if="!u._templates || u._templates.length === 0">
+<span class="text-gray-500">No template data</span>
+</template>
+</td></tr>
+</template>
+</tbody>
+</table>
+<div class="flex items-center justify-between px-4 py-2 border-t" x-show="usersPage.total > usersPage.size">
+<div class="flex items-center gap-2">
+<button @click="usersPage.page=1; store.fetchUsersPage()" :disabled="usersPage.page<=1" class="px-2 py-1 text-xs border rounded hover:bg-gray-100 disabled:opacity-30">First</button>
+<button @click="usersPage.page--; store.fetchUsersPage()" :disabled="usersPage.page<=1" class="px-2 py-1 text-xs border rounded hover:bg-gray-100 disabled:opacity-30">Prev</button>
+<span class="text-xs text-gray-500" x-text="'Page '+usersPage.page+' / '+Math.ceil(usersPage.total/usersPage.size)"></span>
+<button @click="usersPage.page++; store.fetchUsersPage()" :disabled="usersPage.page >= Math.ceil(usersPage.total/usersPage.size)" class="px-2 py-1 text-xs border rounded hover:bg-gray-100 disabled:opacity-30">Next</button>
+<button @click="usersPage.page=Math.ceil(usersPage.total/usersPage.size); store.fetchUsersPage()" :disabled="usersPage.page >= Math.ceil(usersPage.total/usersPage.size)" class="px-2 py-1 text-xs border rounded hover:bg-gray-100 disabled:opacity-30">Last</button>
+</div>
+<select x-model="usersPage.size" @change="usersPage.page=1; store.fetchUsersPage()" class="border rounded px-2 py-1 text-xs">
+<option value="25">25</option>
+<option value="50" selected>50</option>
+<option value="100">100</option>
+<option value="200">200</option>
+</select>
+</div>
+</div>
+{{end}}

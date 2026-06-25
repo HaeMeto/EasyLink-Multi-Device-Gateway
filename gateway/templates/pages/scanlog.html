@@ -1,0 +1,90 @@
+{{define "scanlog"}}
+<h1 class="text-2xl font-bold mb-4">Scanlog</h1>
+<div class="bg-white rounded shadow p-4 mb-4">
+<div class="flex items-center gap-4 flex-wrap">
+<div class="flex items-center gap-2">
+<span class="text-sm text-gray-600">Device:</span>
+<select x-model="scanlogPage.sn" @change="store.onScanlogDeviceChange()" class="border rounded px-2 py-1 text-sm min-w-[200px]">
+<option value="">-- Select --</option>
+<template x-for="d in store.devices" :key="d.sn">
+<option :value="d.sn" x-text="d.sn + ' - ' + d.name"></option>
+</template>
+</select>
+</div>
+<div class="flex items-center gap-2" x-show="scanlogPage.sn">
+<span class="text-sm text-gray-600">Instance:</span>
+<select x-model="scanlogPage.sdkNo" class="border rounded px-2 py-1 text-sm min-w-[160px]">
+<option value="">-- Auto --</option>
+<template x-for="i in store.instances" :key="i.sdk_no">
+<option :value="i.sdk_no" x-text="'sdk-'+i.sdk_no+' :'+i.port+' '+i.status"></option>
+</template>
+</select>
+</div>
+<button @click="store.doCompare()"
+:disabled="!scanlogPage.sn || scanlogPage.comparing"
+class="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50">
+<span x-show="!scanlogPage.comparing">Compare</span>
+<span x-show="scanlogPage.comparing">Comparing...</span>
+</button>
+</div>
+</div>
+<div class="bg-white rounded shadow p-3 mb-4" x-show="scanlogPage.sn">
+<div class="flex items-center gap-4 flex-wrap">
+<span class="px-2 py-0.5 rounded text-xs text-white"
+:class="scanlogPage.status.scanlog_status === 'syncing' ? 'bg-blue-600' :
+scanlogPage.status.scanlog_status === 'stale' ? 'bg-red-600' : 'bg-green-600'"
+x-text="scanlogPage.status.scanlog_status || 'idle'"></span>
+<span class="text-sm">
+<span class="text-gray-500">Synced:</span>
+<span class="font-semibold" x-text="scanlogPage.compare.scanlog?.local ?? 0"></span>
+<span class="text-gray-400">/</span>
+<span class="font-semibold" x-text="scanlogPage.compare.scanlog?.device ?? '-'"></span>
+</span>
+<div class="w-28 h-2 bg-gray-200 rounded-full overflow-hidden"
+x-show="scanlogPage.compare.scanlog?.device > 0">
+<div class="h-full bg-blue-600 rounded-full transition-all duration-700"
+:style="'width:' + Math.min(100, Math.round((scanlogPage.compare.scanlog?.local||0) / scanlogPage.compare.scanlog?.device * 100)) + '%'"></div>
+</div>
+<span class="text-xs"
+x-show="scanlogPage.compare.scanlog?.device > 0"
+:class="scanlogPage.compare.scanlog?.synced ? 'text-green-600' : 'text-yellow-600'"
+x-text="scanlogPage.compare.scanlog?.synced ? 'Synced' : 'Mismatch'"></span>
+<span class="text-xs text-gray-500"
+x-show="scanlogPage.status.last_scan_sync"
+x-text="'Last: '+scanlogPage.status.last_scan_sync"></span>
+<button @click="store.doSyncScanlog()"
+ :disabled="!scanlogPage.sn || scanlogPage.syncing || scanlogPage.compare.scanlog?.synced"
+class="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
+<span x-show="!scanlogPage.syncing">Sync Now</span>
+<span x-show="scanlogPage.syncing">Syncing...</span>
+</button>
+</div>
+</div>
+<div class="bg-white rounded shadow overflow-hidden" x-show="scanlogPage.sn">
+<table class="w-full text-sm">
+<thead><tr class="text-left bg-gray-50 border-b"><th class="px-4 py-2">Scan Date</th><th>PIN</th><th>Verify</th><th>IO</th><th>Work Code</th></tr></thead>
+<tbody>
+<template x-if="scanlogPage.data.length===0"><tr><td colspan="5" class="px-4 py-8 text-center text-gray-400">No scanlog data. Click Sync Now to fetch.</td></tr></template>
+<template x-for="r in scanlogPage.data" :key="r.id">
+<tr class="border-b"><td class="px-4 py-2" x-text="r.scan_date"></td>
+<td x-text="r.pin"></td><td x-text="r.verify_mode"></td><td x-text="r.io_mode"></td><td x-text="r.work_code"></td></tr>
+</template>
+</tbody>
+</table>
+<div class="flex items-center justify-between px-4 py-2 border-t" x-show="scanlogPage.total > scanlogPage.size">
+<div class="flex items-center gap-2">
+<button @click="scanlogPage.page=1; store.fetchScanlogPage()" :disabled="scanlogPage.page<=1" class="px-2 py-1 text-xs border rounded hover:bg-gray-100 disabled:opacity-30">First</button>
+<button @click="scanlogPage.page--; store.fetchScanlogPage()" :disabled="scanlogPage.page<=1" class="px-2 py-1 text-xs border rounded hover:bg-gray-100 disabled:opacity-30">Prev</button>
+<span class="text-xs text-gray-500" x-text="'Page '+scanlogPage.page+' / '+Math.ceil(scanlogPage.total/scanlogPage.size)"></span>
+<button @click="scanlogPage.page++; store.fetchScanlogPage()" :disabled="scanlogPage.page >= Math.ceil(scanlogPage.total/scanlogPage.size)" class="px-2 py-1 text-xs border rounded hover:bg-gray-100 disabled:opacity-30">Next</button>
+<button @click="scanlogPage.page=Math.ceil(scanlogPage.total/scanlogPage.size); store.fetchScanlogPage()" :disabled="scanlogPage.page >= Math.ceil(scanlogPage.total/scanlogPage.size)" class="px-2 py-1 text-xs border rounded hover:bg-gray-100 disabled:opacity-30">Last</button>
+</div>
+<select x-model="scanlogPage.size" @change="scanlogPage.page=1; store.fetchScanlogPage()" class="border rounded px-2 py-1 text-xs">
+<option value="25">25</option>
+<option value="50" selected>50</option>
+<option value="100">100</option>
+<option value="200">200</option>
+</select>
+</div>
+</div>
+{{end}}

@@ -1,0 +1,19 @@
+{{define "jobs"}}
+<h1 class="text-2xl font-bold mb-4">Jobs</h1>
+<div class="bg-white rounded shadow overflow-hidden">
+<table class="w-full text-sm">
+<thead><tr class="text-left bg-gray-50 border-b"><th class="px-4 py-2">ID</th><th>SN</th><th>Action</th><th>Status</th><th>Created</th></tr></thead>
+<tbody>
+<template x-if="store.jobs.length===0"><tr><td colspan="5" class="px-4 py-8 text-center text-gray-400">No jobs recorded</td></tr></template>
+<template x-for="j in store.jobs" :key="j.id">
+<tr class="border-b"><td class="px-4 py-2" x-text="j.id"></td>
+<td x-text="j.sn"></td><td x-text="j.action"></td>
+<td><span class="px-2 py-0.5 rounded text-xs text-white"
+:class="j.status==='DONE'?'bg-green-600':j.status==='ERROR'?'bg-red-600':'bg-yellow-600'"
+x-text="j.status"></span></td>
+<td x-text="j.created_at"></td></tr>
+</template>
+</tbody>
+</table>
+</div>
+{{end}}

@@ -1,11 +1,13 @@
 package services
 
 import (
- "context"
- "encoding/json"
- "fmt"
- "net/url"
- "sync"
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/url"
+	"sync"
+
+	"easylink/gateway/internal/database"
 )
 
 type WorkerStatus string
@@ -17,6 +19,11 @@ const (
  WorkerOffline WorkerStatus = "OFFLINE"
  WorkerError WorkerStatus = "ERROR"
 )
+
+var fastActions = map[string]bool{
+ "dev/info": true,
+ "dev/settime": true,
+}
 
 type jobRequest struct {
  action string
@@ -31,16 +38,17 @@ type jobResponse struct {
 }
 
 type DeviceWorker struct {
- sdkNo int
- port int
- queue chan jobRequest
- status WorkerStatus
- mu sync.RWMutex
- ctx context.Context
- cancel context.CancelFunc
- proxy *FServiceProxy
- jobDB JobRecorder
- logger *EventLogger
+	sdkNo  int
+	port   int
+	queue  chan jobRequest
+	status WorkerStatus
+	mu     sync.RWMutex
+	ctx    context.Context
+	cancel context.CancelFunc
+	proxy  *FServiceProxy
+	absenDB *database.DB
+	jobDB  JobRecorder
+	logger *EventLogger
 }
 
 type JobRecorder interface {
@@ -48,28 +56,50 @@ type JobRecorder interface {
 }
 
 type QueueManager struct {
- workers map[int]*DeviceWorker
- mu sync.RWMutex
- proxy *FServiceProxy
- jobDB JobRecorder
- deviceLookup func(sn string) (sdkNo int, port int, err error)
- logger *EventLogger
+	workers      map[int]*DeviceWorker
+	mu           sync.RWMutex
+	proxy        *FServiceProxy
+	absenDB      *database.DB
+	jobDB        JobRecorder
+	deviceLookup func(sn string) (sdkNo int, port int, err error)
+	logger       *EventLogger
 }
 
-func NewQueueManager(proxy *FServiceProxy, jobDB JobRecorder, deviceLookup func(sn string) (sdkNo int, port int, err error), logger *EventLogger) *QueueManager {
- return &QueueManager{
- workers: make(map[int]*DeviceWorker),
- proxy: proxy,
- jobDB: jobDB,
- deviceLookup: deviceLookup,
- logger: logger,
- }
+func NewQueueManager(proxy *FServiceProxy, absenDB *database.DB, jobDB JobRecorder, deviceLookup func(sn string) (sdkNo int, port int, err error), logger *EventLogger) *QueueManager {
+	return &QueueManager{
+		workers:      make(map[int]*DeviceWorker),
+		proxy:        proxy,
+		absenDB:      absenDB,
+		jobDB:        jobDB,
+		deviceLookup: deviceLookup,
+		logger:       logger,
+	}
 }
 
 func (qm *QueueManager) Enqueue(sn string, action string, params url.Values) (json.RawMessage, error) {
  sdkNo, port, err := qm.deviceLookup(sn)
  if err != nil {
  return nil, err
+ }
+
+ if fastActions[action] {
+ var data json.RawMessage
+ switch action {
+ case "dev/info":
+ data, err = qm.proxy.DeviceInfo(port, sn)
+ case "dev/settime":
+ data, err = qm.proxy.DeviceSetTime(port, sn)
+ }
+
+ reqJSON, _ := json.Marshal(params)
+ respJSON, _ := json.Marshal(data)
+ status := "DONE"
+ if err != nil {
+ status = "ERROR"
+ }
+ qm.jobDB.RecordJob(sdkNo, sn, action, status, string(reqJSON), string(respJSON))
+
+ return data, err
  }
 
  w := qm.getOrCreateWorker(sdkNo, port)
@@ -120,17 +150,18 @@ func (qm *QueueManager) getOrCreateWorker(sdkNo int, port int) *DeviceWorker {
  }
 
  ctx, cancel := context.WithCancel(context.Background())
- w = &DeviceWorker{
- sdkNo: sdkNo,
- port: port,
- queue: make(chan jobRequest, 100),
- status: WorkerIdle,
- ctx: ctx,
- cancel: cancel,
- proxy: qm.proxy,
- jobDB: qm.jobDB,
- logger: qm.logger,
- }
+	w = &DeviceWorker{
+		sdkNo:   sdkNo,
+		port:    port,
+		queue:   make(chan jobRequest, 100),
+		status:  WorkerIdle,
+		ctx:     ctx,
+		cancel:  cancel,
+		proxy:   qm.proxy,
+		absenDB: qm.absenDB,
+		jobDB:   qm.jobDB,
+		logger:  qm.logger,
+	}
  qm.workers[sdkNo] = w
 
  go w.run()
@@ -210,10 +241,6 @@ func (w *DeviceWorker) processJob(req jobRequest) {
  }
 
  switch req.action {
- case "dev/info":
- data, err = w.proxy.DeviceInfo(w.port, req.sn)
- case "dev/settime":
- data, err = w.proxy.DeviceSetTime(w.port, req.sn)
  case "dev/init":
  data, err = w.proxy.DeviceInit(w.port, req.sn)
  case "dev/deladmin":
@@ -252,9 +279,19 @@ func (w *DeviceWorker) processJob(req jobRequest) {
  data, err = w.proxy.UserDel(w.port, req.sn, req.params.Get("pin"))
  case "user/delall":
  data, err = w.proxy.UserDelAll(w.port, req.sn)
- case "log/del":
- data, err = w.proxy.LogDel(w.port, req.sn)
- default:
+	case "log/del":
+		data, err = w.proxy.LogDel(w.port, req.sn)
+	case "scanlog/sync":
+ data, err = w.proxy.SyncScanlog(w.absenDB, w.port, req.sn, w.logger)
+	case "scanlog/sync-new":
+		data, err = w.proxy.SyncScanlogNew(w.absenDB, w.port, req.sn, w.logger)
+	case "user/sync-full":
+		limit := 0
+		if l, ok := req.params["limit"]; ok && len(l) > 0 {
+			fmt.Sscanf(l[0], "%d", &limit)
+		}
+		data, err = w.proxy.SyncUsersFull(w.absenDB, w.port, req.sn, limit, w.logger)
+	default:
  err = fmt.Errorf("unknown action: %s", req.action)
  }
 

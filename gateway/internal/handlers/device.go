@@ -67,10 +67,6 @@ func (h *Handler) HandleCreateDevice(w http.ResponseWriter, r *http.Request) {
 	if req.EthernetPort == "" {
 		req.EthernetPort = "5005"
 	}
-	if req.Enabled == 0 {
-		req.Enabled = 1
-	}
-
 	res, err := h.DB.Exec(
 		`INSERT INTO devices (sdk_no, name, sn, activation, password, ip, ethernet_port, online, enabled, fail_count, last_offline, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 0, '', datetime('now'))`,

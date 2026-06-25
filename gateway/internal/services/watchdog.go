@@ -1,22 +1,25 @@
 package services
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"log"
-	"net"
-	"net/http"
-	"os"
-	"path/filepath"
-	"time"
+ "bytes"
+ "context"
+ "encoding/json"
+ "fmt"
+ "io"
+ "log"
+ "net"
+ "net/http"
+ "os"
+ "path/filepath"
+ "sync"
+ "time"
 
-	"easylink/gateway/internal/database"
+ "easylink/gateway/internal/database"
 )
 
 var errBusy = fmt.Errorf("busy")
+
+const busyCooldownDuration = 60 * time.Second
 
 type HealthReport struct {
 	Total     int              `json:"total"`
@@ -39,26 +42,29 @@ type HealthInstance struct {
 }
 
 type Watchdog struct {
-	tickCount         int
-	interval          time.Duration
-	db                *database.DB
-	sdkMgr            *SdkManager
-	queueMgr          *QueueManager
-	proxy             *FServiceProxy
-	logger            *EventLogger
-	instanceFailCount map[int]int
+ tickCount int
+ interval time.Duration
+ db *database.DB
+ sdkMgr *SdkManager
+ queueMgr *QueueManager
+ proxy *FServiceProxy
+ logger *EventLogger
+ instanceFailCount map[int]int
+ busyCooldown map[string]time.Time
+ cooldownMu sync.RWMutex
 }
 
 func NewWatchdog(interval time.Duration, db *database.DB, sdkMgr *SdkManager, queueMgr *QueueManager, proxy *FServiceProxy, logger *EventLogger) *Watchdog {
-	return &Watchdog{
-		interval:          interval,
-		db:                db,
-		sdkMgr:            sdkMgr,
-		queueMgr:          queueMgr,
-		proxy:             proxy,
-		logger:            logger,
-		instanceFailCount: make(map[int]int),
-	}
+ return &Watchdog{
+ interval: interval,
+ db: db,
+ sdkMgr: sdkMgr,
+ queueMgr: queueMgr,
+ proxy: proxy,
+ logger: logger,
+ instanceFailCount: make(map[int]int),
+ busyCooldown: make(map[string]time.Time),
+ }
 }
 
 func (w *Watchdog) Start(ctx context.Context) {
@@ -205,33 +211,38 @@ func (w *Watchdog) checkDevicesForInstance(sdkNo int, port int) {
 	}
 	rows.Close()
 
-	for _, d := range devices {
-		if d.online == 0 && d.lastOffline != "" {
-			t, parseErr := time.Parse("2006-01-02 15:04:05", d.lastOffline)
-			if parseErr == nil && time.Since(t) < 30*time.Minute {
-				continue
-			}
-			w.db.Exec("UPDATE devices SET online = 1, fail_count = 0 WHERE id = ?", d.id)
-		}
+ for _, d := range devices {
+ if d.online == 0 && d.lastOffline != "" {
+ t, parseErr := time.Parse("2006-01-02 15:04:05", d.lastOffline)
+ if parseErr == nil && time.Since(t) < 30*time.Minute {
+ continue
+ }
+ w.db.Exec("UPDATE devices SET online = 1, fail_count = 0 WHERE id = ?", d.id)
+ }
 
-		err := w.checkDeviceHealth(port, d.sn)
-		if err == nil {
+ if w.IsDeviceInCooldown(d.sn) {
+ continue
+ }
+
+ err := w.checkDeviceHealth(port, d.sn)
+ if err == nil {
 			w.db.Exec("UPDATE devices SET fail_count = 0, online = 1, last_offline = '' WHERE id = ?", d.id)
 			if d.failCount > 0 {
 				log.Printf("watchdog: [device] sn=%s dev=%d sdk=%d recovered (was fail %d)", d.sn, d.id, sdkNo, d.failCount)
 				if w.logger != nil {
-					w.logger.Log("watchdog", fmt.Sprintf("[device] %s recovered (was fail %d)", d.sn, d.failCount))
+					w.logger.Log("watchdog", fmt.Sprintf("[device] sdk-%d %s recovered (was fail %d)", sdkNo, d.sn, d.failCount))
 				}
 			} else if d.online == 0 {
 				log.Printf("watchdog: [device] sn=%s dev=%d sdk=%d back online (retry)", d.sn, d.id, sdkNo)
 				if w.logger != nil {
-					w.logger.Log("watchdog", fmt.Sprintf("[device] %s back online (retry)", d.sn))
+					w.logger.Log("watchdog", fmt.Sprintf("[device] sdk-%d %s back online (retry)", sdkNo, d.sn))
 				}
 			}
-		} else if err == errBusy {
-			log.Printf("watchdog: [device] sn=%s dev=%d sdk=%d busy", d.sn, d.id, sdkNo)
+ } else if err == errBusy {
+ w.MarkDeviceBusy(d.sn)
+ log.Printf("watchdog: [device] sn=%s dev=%d sdk=%d busy", d.sn, d.id, sdkNo)
 			if w.logger != nil {
-				w.logger.Log("watchdog", fmt.Sprintf("[device] %s busy", d.sn))
+				w.logger.Log("watchdog", fmt.Sprintf("[device] sdk-%d %s busy", sdkNo, d.sn))
 			}
 		} else {
 			newCount := d.failCount + 1
@@ -240,12 +251,12 @@ func (w *Watchdog) checkDevicesForInstance(sdkNo int, port int) {
 				w.db.Exec("UPDATE devices SET online = 0, last_offline = datetime('now') WHERE id = ?", d.id)
 				log.Printf("watchdog: [device] sn=%s dev=%d sdk=%d OFFLINE after 5 failures", d.sn, d.id, sdkNo)
 				if w.logger != nil {
-					w.logger.Log("watchdog", fmt.Sprintf("[device] %s OFFLINE after 5 failures", d.sn))
+					w.logger.Log("watchdog", fmt.Sprintf("[device] sdk-%d %s OFFLINE after 5 failures", sdkNo, d.sn))
 				}
 			} else {
 				log.Printf("watchdog: [device] sn=%s dev=%d sdk=%d unhealthy: %s [fail %d/5]", d.sn, d.id, sdkNo, err, newCount)
 				if w.logger != nil {
-					w.logger.Log("watchdog", fmt.Sprintf("[device] %s unhealthy: %s [fail %d/5]", d.sn, err, newCount))
+					w.logger.Log("watchdog", fmt.Sprintf("[device] sdk-%d %s unhealthy: %s [fail %d/5]", sdkNo, d.sn, err, newCount))
 				}
 			}
 		}
@@ -282,6 +293,22 @@ func (w *Watchdog) checkDeviceHealth(port int, sn string) error {
 	}
 
 	return nil
+}
+
+func (w *Watchdog) IsDeviceInCooldown(sn string) bool {
+ w.cooldownMu.RLock()
+ defer w.cooldownMu.RUnlock()
+ t, ok := w.busyCooldown[sn]
+ if !ok {
+ return false
+ }
+ return time.Since(t) < busyCooldownDuration
+}
+
+func (w *Watchdog) MarkDeviceBusy(sn string) {
+ w.cooldownMu.Lock()
+ defer w.cooldownMu.Unlock()
+ w.busyCooldown[sn] = time.Now()
 }
 
 func (w *Watchdog) checkPort(port int) error {

@@ -358,6 +358,12 @@ func (m *SdkManager) Restart(sdkNo int) error {
 
 	ldbPath := filepath.Join(inst.Path, "db_temp.ldb")
 	os.Remove(ldbPath)
+	os.Remove(filepath.Join(inst.Path, "db_temp.laccdb"))
+	os.Remove(filepath.Join(inst.Path, "db_temp.lock"))
+	templateContent, err := m.template.ReadFile("template/db_temp.mdb")
+	if err == nil {
+		os.WriteFile(filepath.Join(inst.Path, "db_temp.mdb"), templateContent, 0644)
+	}
 
 	if err := m.startLocked(sdkNo); err != nil {
 		return fmt.Errorf("restart start: %w", err)

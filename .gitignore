@@ -3,3 +3,12 @@ sample_code/
 
 instances/**/*
 !instances/**/.gitkeep
+
+*.db
+*.db-shm
+*.db-wal
+*.exe
+*.exe~
+test-screenshots/
+agent-*.md
+*.bak

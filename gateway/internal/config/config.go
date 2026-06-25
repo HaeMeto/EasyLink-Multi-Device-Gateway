@@ -12,6 +12,7 @@ type Config struct {
 	CorePath          string `json:"core_path"`
 	InstancesPath     string `json:"instances_path"`
 	DBPath            string `json:"db_path"`
+	AbsenDBPath       string `json:"absen_db_path"`
 	RootDeviceIniPath string `json:"root_device_ini_path"`
 	GatewayPort       int    `json:"gateway_port"`
 	FServiceStartPort int    `json:"fservice_start_port"`
@@ -24,6 +25,7 @@ func Default() *Config {
 		CorePath:          wd + "\\core",
 		InstancesPath:     wd + "\\instances",
 		DBPath:            wd + "\\easylink.db",
+		AbsenDBPath:       wd + "\\absen.db",
 		RootDeviceIniPath: wd + "\\Device.ini",
 		GatewayPort:       7100,
 		FServiceStartPort: 7110,
@@ -52,6 +54,9 @@ func Load() (*Config, error) {
 	}
 	if v := os.Getenv("EASYLINK_DB_PATH"); v != "" {
 		cfg.DBPath = v
+	}
+	if v := os.Getenv("EASYLINK_ABSEN_DB_PATH"); v != "" {
+		cfg.AbsenDBPath = v
 	}
 	if v := os.Getenv("EASYLINK_ROOT_DEVICE_INI_PATH"); v != "" {
 		cfg.RootDeviceIniPath = v

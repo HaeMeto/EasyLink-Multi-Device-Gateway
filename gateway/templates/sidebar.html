@@ -1,0 +1,38 @@
+{{define "sidebar"}}
+<aside class="w-56 bg-gray-900 text-white flex flex-col flex-shrink-0">
+<div class="p-4 text-lg font-bold border-b border-gray-700">EasyLink</div>
+<nav class="flex-1 p-2 space-y-1">
+<a href="/"
+:class="route==='/' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'"
+class="block px-3 py-2 rounded text-sm">Dashboard</a>
+<a href="/instances"
+:class="route==='/instances' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'"
+class="block px-3 py-2 rounded text-sm">Instances</a>
+<a href="/devices"
+:class="(route==='/devices' || route.startsWith('/devices/')) ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'"
+class="block px-3 py-2 rounded text-sm">Devices</a>
+<a href="/scanlog"
+:class="route==='/scanlog' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'"
+class="block px-3 py-2 rounded text-sm">Scanlog</a>
+<a href="/users"
+:class="route==='/users' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'"
+class="block px-3 py-2 rounded text-sm">Users</a>
+<a href="/test"
+:class="route==='/test' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'"
+class="block px-3 py-2 rounded text-sm">Test</a>
+<a href="/jobs"
+:class="route==='/jobs' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'"
+class="block px-3 py-2 rounded text-sm">Jobs</a>
+<a href="/logs"
+:class="route==='/logs' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'"
+class="block px-3 py-2 rounded text-sm">Logs</a>
+<a href="/settings"
+:class="route==='/settings' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'"
+class="block px-3 py-2 rounded text-sm">Settings</a>
+</nav>
+<div class="p-3 border-t border-gray-700 text-xs text-gray-500">
+<div>Running: <span class="text-green-400" x-text="store.health.running"></span></div>
+<div>Error: <span class="text-red-400" x-text="store.health.error"></span></div>
+</div>
+</aside>
+{{end}}

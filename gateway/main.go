@@ -3,9 +3,11 @@
 package main
 
 import (
+ "bytes"
  "context"
  "embed"
  "fmt"
+ "html/template"
  "io/fs"
  "log"
  "net/http"
@@ -26,6 +28,9 @@ var templateFS embed.FS
 
 //go:embed ui/*
 var uiFS embed.FS
+
+//go:embed all:templates
+var templatesFS embed.FS
 
 type jobRecorder struct {
  db *database.DB
@@ -48,16 +53,31 @@ func main() {
  log.Fatalf("config: %v", err)
  }
 
- db, err := database.Open(cfg.DBPath)
- if err != nil {
- log.Fatalf("database: %v", err)
- }
- defer db.Close()
+	db, err := database.Open(cfg.DBPath)
+	if err != nil {
+		log.Fatalf("database: %v", err)
+	}
+	defer db.Close()
+
+	absenDB, err := database.Open(cfg.AbsenDBPath)
+	if err != nil {
+		log.Fatalf("absen database: %v", err)
+	}
+	defer absenDB.Close()
 
  if err := db.Migrate(); err != nil {
  log.Fatalf("migrate: %v", err)
  }
- log.Println("database migrated ok")
+	log.Println("database migrated ok")
+
+	if err := absenDB.AbsenMigrate(); err != nil {
+		log.Fatalf("absen migrate: %v", err)
+	}
+	log.Println("absen database migrated ok")
+
+	if err := absenDB.Repair(); err != nil {
+		log.Printf("absen repair warning: %v", err)
+	}
 
  eventLogger := services.NewEventLogger(500)
 
@@ -68,9 +88,7 @@ func main() {
  if err := sync.FullSync(); err != nil {
  log.Printf("sync warning: %v", err)
  }
- db.Exec("UPDATE devices SET enabled = 1 WHERE enabled = 0")
-
- sdkMgr := services.NewSdkManager(db, templateFS, cfg.InstancesPath, cfg.FServiceStartPort, sync, eventLogger)
+	sdkMgr := services.NewSdkManager(db, templateFS, cfg.InstancesPath, cfg.FServiceStartPort, sync, eventLogger)
 
  rowsAS, err := db.Query("SELECT sdk_no FROM sdk_instances")
  if err == nil {
@@ -122,18 +140,22 @@ func main() {
  }
 
  jr := &jobRecorder{db: db}
- queue := services.NewQueueManager(proxy, jr, deviceLookup, eventLogger)
+	queue := services.NewQueueManager(proxy, absenDB, jr, deviceLookup, eventLogger)
 
- wd := services.NewWatchdog(cfg.WatchdogDuration(), db, sdkMgr, queue, proxy, eventLogger)
+	wd := services.NewWatchdog(cfg.WatchdogDuration(), db, sdkMgr, queue, proxy, eventLogger)
 
- h := &handlers.Handler{
- DB: db,
- SdkMgr: sdkMgr,
- Sync: sync,
- Queue: queue,
- Watchdog: wd,
- Logger: eventLogger,
- }
+ syncer := services.NewSyncer(db, absenDB, proxy, deviceLookup, eventLogger, wd)
+
+	h := &handlers.Handler{
+		DB:       db,
+		AbsenDB:  absenDB,
+		Proxy:    proxy,
+		SdkMgr:   sdkMgr,
+		Sync:     sync,
+		Queue:    queue,
+		Watchdog: wd,
+		Logger:   eventLogger,
+	}
 
  mux := http.NewServeMux()
 
@@ -169,7 +191,21 @@ func main() {
  mux.HandleFunc("POST /api/devices/{sn}/time", h.HandleDeviceSetTime)
  mux.HandleFunc("POST /api/devices/{sn}/init", h.HandleDeviceInit)
  mux.HandleFunc("POST /api/devices/{sn}/deladmin", h.HandleDeviceDelAdmin)
- mux.HandleFunc("POST /api/devices/{sn}/log/del", h.HandleLogDel)
+	mux.HandleFunc("POST /api/devices/{sn}/log/del", h.HandleLogDel)
+
+	mux.HandleFunc("GET /api/devices/{sn}/scan/logs", h.HandleAbsenScanLogs)
+	mux.HandleFunc("GET /api/devices/{sn}/scan/smart", h.HandleScanlogSmartFetch)
+	mux.HandleFunc("POST /api/devices/{sn}/scan/sync", h.HandleAbsenScanlogSync)
+	mux.HandleFunc("POST /api/devices/{sn}/users/sync", h.HandleAbsenSyncUsers)
+	mux.HandleFunc("GET /api/devices/{sn}/users/{pin}/templates", h.HandleAbsenUserTemplates)
+	mux.HandleFunc("GET /api/devices/{sn}/absen/info", h.HandleAbsenDeviceInfo)
+	mux.HandleFunc("GET /api/devices/{sn}/absen/compare", h.HandleAbsenCompare)
+	mux.HandleFunc("GET /api/devices/{sn}/absen/users", h.HandleAbsenUsersList)
+
+	mux.HandleFunc("POST /api/test/device-info", h.HandleTestDeviceInfo)
+
+	mux.HandleFunc("GET /api/config", h.HandleGetConfig)
+	mux.HandleFunc("PUT /api/config", h.HandlePutConfig)
 
  mux.HandleFunc("POST /api/sync/reload", h.HandleSyncReload)
  mux.HandleFunc("GET /api/sync/status", h.HandleSyncStatus)
@@ -177,16 +213,58 @@ func main() {
  mux.HandleFunc("GET /api/logs", h.HandleLogs)
  mux.HandleFunc("GET /api/logs/stream", h.HandleLogStream)
 
+ tmplFS, err := fs.Sub(templatesFS, "templates")
+ if err != nil {
+ log.Fatalf("templates sub: %v", err)
+ }
+ var pageTmpl *template.Template
+ pageTmpl = template.New("").Funcs(template.FuncMap{
+ "render": func(name string, data any) template.HTML {
+ var buf bytes.Buffer
+ if err := pageTmpl.ExecuteTemplate(&buf, name, data); err != nil {
+ return template.HTML("<!-- template render error: " + template.HTMLEscapeString(err.Error()) + " -->")
+ }
+ return template.HTML(buf.String())
+ },
+ })
+ pageTmpl = template.Must(pageTmpl.ParseFS(tmplFS, "*.html", "pages/*.html"))
+
+ type M map[string]string
+ render := func(w http.ResponseWriter, page string) {
+ if err := pageTmpl.ExecuteTemplate(w, "base", M{"Page": page}); err != nil {
+ http.Error(w, err.Error(), http.StatusInternalServerError)
+ }
+ }
+
+ mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { render(w, "dashboard") })
+ mux.HandleFunc("GET /instances", func(w http.ResponseWriter, r *http.Request) { render(w, "instances") })
+ mux.HandleFunc("GET /devices", func(w http.ResponseWriter, r *http.Request) { render(w, "devices") })
+ mux.HandleFunc("GET /devices/{sn}", func(w http.ResponseWriter, r *http.Request) { render(w, "device-detail") })
+ mux.HandleFunc("GET /scanlog", func(w http.ResponseWriter, r *http.Request) { render(w, "scanlog") })
+ mux.HandleFunc("GET /users", func(w http.ResponseWriter, r *http.Request) { render(w, "users") })
+ mux.HandleFunc("GET /test", func(w http.ResponseWriter, r *http.Request) { render(w, "test") })
+ mux.HandleFunc("GET /jobs", func(w http.ResponseWriter, r *http.Request) { render(w, "jobs") })
+ mux.HandleFunc("GET /logs", func(w http.ResponseWriter, r *http.Request) { render(w, "logs") })
+ mux.HandleFunc("GET /settings", func(w http.ResponseWriter, r *http.Request) { render(w, "settings") })
+
  uiContent, err := fs.Sub(uiFS, "ui")
  if err != nil {
  log.Printf("ui sub: %v", err)
  } else {
- mux.Handle("/", http.FileServer(http.FS(uiContent)))
+ cssFS, err := fs.Sub(uiContent, "css")
+ if err == nil {
+ mux.Handle("/css/", http.StripPrefix("/css/", http.FileServer(http.FS(cssFS))))
+ }
+ jsFS, err := fs.Sub(uiContent, "js")
+ if err == nil {
+ mux.Handle("/js/", http.StripPrefix("/js/", http.FileServer(http.FS(jsFS))))
+ }
  }
 
  ctx, cancel := context.WithCancel(context.Background())
  defer cancel()
- wd.Start(ctx)
+	wd.Start(ctx)
+	syncer.Start(ctx)
 
  server := &http.Server{
  Addr: cfg.ListenAddr(),

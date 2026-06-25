@@ -1,0 +1,55 @@
+{{define "devices"}}
+<div class="flex justify-between items-center mb-4">
+<h1 class="text-2xl font-bold">Devices</h1>
+<button @click="openDeviceForm()" class="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700">+ Add</button>
+</div>
+<div class="bg-white rounded shadow overflow-hidden">
+<table class="w-full text-sm">
+<thead><tr class="text-left bg-gray-50 border-b"><th class="px-4 py-2">ID</th><th>Name</th><th>SN</th><th>IP</th><th>Instance</th><th>Status</th><th>Enabled</th><th>Actions</th></tr></thead>
+<tbody>
+<template x-if="store.devices.length === 0"><tr><td colspan="8" class="px-4 py-8 text-center text-gray-400">No devices. Click Add to register one.</td></tr></template>
+<template x-for="d in store.devices" :key="d.id">
+<tr class="border-b"><td class="px-4 py-2" x-text="d.id"></td>
+<td x-text="d.name"></td><td x-text="d.sn"></td><td x-text="d.ip"></td>
+<td x-text="d.sdk_no"></td>
+<td><span class="px-2 py-0.5 rounded text-xs text-white"
+:class="d.online ? 'bg-green-600' : 'bg-red-600'"
+x-text="d.online ? 'Online' : 'Offline'"></span></td>
+<td>
+<input type="checkbox" :checked="d.enabled === 1"
+@change="toggleDeviceEnabled(d)"
+class="w-4 h-4 cursor-pointer accent-blue-600">
+</td>
+<td class="space-x-1">
+<button @click="window.location.href='/devices/'+d.sn" class="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700">Info</button>
+<button @click="openDeviceForm(d)" class="px-2 py-1 text-xs bg-yellow-600 text-white rounded hover:bg-yellow-700">Edit</button>
+<button @click="confirmDelete('device', d.id)" class="px-2 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700">Del</button>
+</td></tr>
+</template>
+</tbody>
+</table>
+</div>
+
+<div x-show="deviceForm.open" class="fixed inset-0 z-30 flex items-center justify-center bg-black/50">
+<div class="bg-white rounded-lg shadow-xl w-[500px] max-h-[90vh] overflow-auto p-6">
+<h2 class="text-lg font-semibold mb-4" x-text="deviceForm.editing ? 'Edit Device' : 'Add Device'"></h2>
+<div class="space-y-2">
+<div><label class="block text-xs text-gray-500">Name</label><input x-model="deviceForm.name" class="w-full border rounded px-2 py-1 text-sm"></div>
+<div><label class="block text-xs text-gray-500">SN *</label><input x-model="deviceForm.sn" class="w-full border rounded px-2 py-1 text-sm"></div>
+<div><label class="block text-xs text-gray-500">Activation</label><input x-model="deviceForm.activation" class="w-full border rounded px-2 py-1 text-sm"></div>
+<div><label class="block text-xs text-gray-500">Password</label><input x-model="deviceForm.password" class="w-full border rounded px-2 py-1 text-sm"></div>
+<div><label class="block text-xs text-gray-500">IP</label><input x-model="deviceForm.ip" class="w-full border rounded px-2 py-1 text-sm"></div>
+<div><label class="block text-xs text-gray-500">Port</label><input x-model="deviceForm.ethernet_port" class="w-full border rounded px-2 py-1 text-sm"></div>
+<div><label class="block text-xs text-gray-500">Instance #</label><input x-model.number="deviceForm.sdk_no" class="w-full border rounded px-2 py-1 text-sm"></div>
+<div class="flex items-center gap-2 pt-1">
+<input type="checkbox" x-model="deviceForm.enabled" class="w-4 h-4 accent-blue-600">
+<label class="text-xs text-gray-500">Enabled</label>
+</div>
+</div>
+<div class="flex justify-end gap-2 mt-4">
+<button @click="deviceForm.open=false" class="px-4 py-1.5 text-sm text-gray-600 border rounded">Cancel</button>
+<button @click="doSaveDevice()" class="px-4 py-1.5 text-sm text-white bg-blue-600 rounded">Save</button>
+</div>
+</div>
+</div>
+{{end}}

@@ -122,7 +122,7 @@ func (s *SyncService) importFromRootLocked(rootIniPath string) error {
  devID = int(id)
  } else {
   _, err := s.db.Exec(
-  `UPDATE devices SET name=?, activation=?, password=?, ip=?, ethernet_port=?, enabled=1, updated_at=datetime('now')
+  `UPDATE devices SET name=?, activation=?, password=?, ip=?, ethernet_port=?, updated_at=datetime('now')
   WHERE id=?`,
  entry.Name, entry.Activation, entry.Password, entry.IP, entry.EthernetPort, devID,
  )
