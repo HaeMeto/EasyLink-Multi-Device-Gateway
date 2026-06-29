@@ -9,6 +9,16 @@ instances/**/*
 *.db-wal
 *.exe
 *.exe~
+*.dll
+*.ocx
+*.oca
+*.pdb
+*.tlb
+*.mdb
+*.ldb
+*.zip
+*.pdf
+*.pfx
 test-screenshots/
 agent-*.md
 *.bak
