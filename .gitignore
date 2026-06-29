@@ -17,7 +17,6 @@ instances/**/*
 *.mdb
 *.ldb
 *.zip
-*.pdf
 *.pfx
 test-screenshots/
 agent-*.md
