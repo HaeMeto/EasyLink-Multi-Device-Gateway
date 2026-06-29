@@ -1,10 +1,11 @@
 name: Build easylink-gate
 
 on:
-  push:
-    branches: [main, master]
-  pull_request:
-    branches: [main, master]
+ push:
+ branches: [main, master]
+
+permissions:
+ contents: write
 
 jobs:
   build:
@@ -36,16 +37,8 @@ jobs:
       - name: Compress artifact
         run: Compress-Archive -Path "gateway\easylink-gate.exe" -DestinationPath "easylink-gate.zip"
 
-      - name: Upload artifact
-        if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
-        with:
-          name: easylink-gate
-          path: easylink-gate.zip
-
-      - name: Create Release
-        if: github.event_name == 'push'
-        uses: softprops/action-gh-release@v2
+ - name: Create Release
+ uses: softprops/action-gh-release@v2
         with:
           name: easylink-gate-${{ github.run_number }}
           tag_name: v${{ github.run_number }}
