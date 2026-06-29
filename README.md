@@ -64,7 +64,7 @@ Gateway ini secara teori mendukung **semua perangkat yang kompatibel dengan Fing
 
 File `Device.ini` **wajib diisi** sebelum menjalankan gateway. File ini berisi konfigurasi setiap perangkat absensi yang akan dikelola.
 
-Letakkan `Device.ini` di root project (sama dengan lokasi `gateway.exe`).
+Letakkan `Device.ini` di root project (sama dengan lokasi `easylink-gate.exe`).
 
 ### Format Device.ini
 
@@ -101,10 +101,12 @@ ethernet_port=5005
 |-----------------|-------|------------|
 | `[Nama Device]` | Ya    | Nama section (bebas, untuk identifikasi) |
 | `sn`            | Ya    | Serial number perangkat |
-| `aktivasi`      | Ya    | Kode aktivasi dari Fingerspot |
-| `password`      | Ya    | Password device (nilai `0` jika tidak ada) |
-| `ip_address`    | Ya    | Alamat IP perangkat di jaringan |
-| `ethernet_port` | Ya    | Port ethernet perangkat (default `5005`) |
+| `aktivasi` | Ya | Kode aktivasi dari Fingerspot |
+| `password` | Ya | Password device (nilai `0` jika tidak ada) |
+| `ip_address` | Ya | Alamat IP perangkat di jaringan |
+| `ethernet_port` | Ya | Port ethernet perangkat (default `5005`) |
+
+> **Penting:** Kode aktivasi yang dimaksud adalah **SDK activation key** (dibeli terpisah dari Fingerspot untuk lisensi SDK), **bukan** Serial Number atau activation code yang sepaket dengan mesin absensi. Untuk versi mesin tertentu, Anda dapat menghubungi pihak Fingerspot untuk mendapatkan SDK activation key secara gratis.
 
 > **Watermark aktivasi:** Kode aktivasi memiliki format `XXXXX-XXXX-XXXXX-XXXX-XXXXX-XXXX-XXXXX::A-B` di mana `A` adalah **watermark opsi** dan `B` adalah **tipe produk** (contoh: `::3-29` untuk tipe 3 opsi 29).
 
@@ -124,10 +126,8 @@ cd Easylink
 # 3. Jalankan build script
 .\build.ps1
 
-# Output: gateway.exe di root project
+# Output: easylink-gate.exe di root project
 ```
-
-> **Catatan:** Folder `core/` tidak termasuk dalam repository. Salin dari instalasi EasyLink SDK yang sudah ada.
 
 ---
 
@@ -170,7 +170,7 @@ Konfigurasi gateway dapat diatur melalui file `config.json` atau environment var
 
 ```powershell
 # Jalankan gateway
-.\gateway.exe
+.\easylink-gate.exe
 
 # Buka dashboard di browser
 # http://localhost:7100

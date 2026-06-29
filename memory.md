@@ -18,7 +18,7 @@ D:\Project\Easylink\
 ├── Device.ini             # Root SSoT device config
 ├── easylink.db            # SQLite metadata (auto-created)
 ├── absen.db               # SQLite scanlog/user data (auto-created)
-├── gateway.exe            # Built binary
+├── easylink-gate.exe # Built binary
 ├── build.ps1              # Build script
 ├── memory.md              # This file
 ├── plan.md                # Implementation plan & bug tracker
@@ -91,8 +91,8 @@ User/Browser → gateway:7100 → queue (per-device) → FService proxy → FSer
 
 Multi-Page (Go html/template): Dashboard, Instances, Devices, Scanlog, Users, Test, Jobs, Logs, Settings
 
-Build: core/ → copy → template/ → embed → gateway.exe
-Startup: gateway.exe → extract template → create instances → auto-migrate DB
+Build: core/ → copy → template/ → embed → easylink-gate.exe
+Startup: easylink-gate.exe → extract template → create instances → auto-migrate DB
 → migrasi absen.db → Repair() → parse Device.ini → upsert DB → regen root Device.ini → auto-start instances
 Device.ini: root ← symlink (fallback copy) → instance directories
 Watchdog (10s tick): check PID → port every tick, HTTP every tick
@@ -201,7 +201,7 @@ WAL mode, foreign keys enabled, busy_timeout=5000, MaxOpenConns=1.
 .\build.ps1
 
 # Run (from project root):
-.\gateway.exe
+.\easylink-gate.exe
 
 # Smoke test:
 curl http://localhost:7100/health

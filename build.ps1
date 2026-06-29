@@ -51,13 +51,13 @@ Set-Location -LiteralPath "gateway"
 go mod tidy
 if ($LASTEXITCODE -ne 0) { throw "go mod tidy failed" }
 
-Write-Host "[3/4] Building gateway.exe..."
+Write-Host "[3/4] Building easylink-gate.exe..."
 $env:CGO_ENABLED = "0"
-go build -ldflags="-s -w" -o gateway.exe .
+go build -ldflags="-s -w" -o easylink-gate.exe .
 if ($LASTEXITCODE -ne 0) { throw "go build failed" }
 
-Write-Host "[4/4] Copying gateway.exe to project root..."
-Copy-Item -LiteralPath "gateway.exe" -Destination "..\gateway.exe" -Force
+Write-Host "[4/4] Copying easylink-gate.exe to project root..."
+Copy-Item -LiteralPath "easylink-gate.exe" -Destination "..\easylink-gate.exe" -Force
 Set-Location -LiteralPath ".."
 
-Write-Host "=== Build complete: gateway.exe ==="
+Write-Host "=== Build complete: easylink-gate.exe ==="
