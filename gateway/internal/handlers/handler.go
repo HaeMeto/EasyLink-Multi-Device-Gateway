@@ -1,15 +1,16 @@
 package handlers
 
 import (
- "encoding/json"
- "errors"
- "net/http"
- "strconv"
- "strings"
- "time"
+	"encoding/json"
+	"errors"
+	"math/rand"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
 
- "easylink/gateway/internal/database"
- "easylink/gateway/internal/services"
+	"easylink/gateway/internal/database"
+	"easylink/gateway/internal/services"
 )
 
 type testDeviceInfoRequest struct {
@@ -18,14 +19,15 @@ type testDeviceInfoRequest struct {
 }
 
 type Handler struct {
-	DB       *database.DB
-	AbsenDB  *database.DB
-	Proxy    *services.FServiceProxy
-	SdkMgr   *services.SdkManager
-	Sync     *services.SyncService
-	Queue    *services.QueueManager
-	Watchdog *services.Watchdog
-	Logger   *services.EventLogger
+ DB *database.DB
+ AbsenDB *database.DB
+ Proxy *services.FServiceProxy
+ SdkMgr *services.SdkManager
+ Sync *services.SyncService
+ Queue *services.QueueManager
+ Watchdog *services.Watchdog
+ Logger *services.EventLogger
+ FileLogger *services.FileLogger
 }
 
 func (h *Handler) writeJSON(w http.ResponseWriter, status int, v interface{}) {
@@ -94,14 +96,30 @@ func (h *Handler) resolveDevice(sn string) (sdkNo int, port int, err error) {
  if err != nil {
  return 0, 0, errors.New("device not found")
  }
- if sdkNo == 0 {
- err = h.DB.QueryRow(
- "SELECT sdk_no, port FROM sdk_instances WHERE status='RUNNING' ORDER BY sdk_no LIMIT 1",
- ).Scan(&sdkNo, &port)
- if err != nil {
- return 0, 0, errors.New("no running SDK instances")
- }
- }
+	if sdkNo == 0 {
+		rows, err := h.DB.Query("SELECT sdk_no, port FROM sdk_instances WHERE status='RUNNING'")
+		if err != nil {
+			return 0, 0, errors.New("no running SDK instances")
+		}
+		defer rows.Close()
+		type instRow struct {
+			sdkNo int
+			port  int
+		}
+		var insts []instRow
+		for rows.Next() {
+			var r instRow
+			if rows.Scan(&r.sdkNo, &r.port) == nil {
+				insts = append(insts, r)
+			}
+		}
+		if len(insts) == 0 {
+			return 0, 0, errors.New("no running SDK instances")
+		}
+		pick := insts[rand.Intn(len(insts))]
+		sdkNo = pick.sdkNo
+		port = pick.port
+	}
  if port == 0 {
  return 0, 0, errors.New("port not found")
  }
@@ -114,23 +132,26 @@ type altInstance struct {
 }
 
 func (h *Handler) queryAlternatePorts(excludeSdkNo int) []altInstance {
- rows, err := h.DB.Query(
- "SELECT sdk_no, port FROM sdk_instances WHERE status='RUNNING' AND sdk_no != ? AND port > 0 ORDER BY sdk_no",
- excludeSdkNo,
- )
- if err != nil {
- return nil
- }
- defer rows.Close()
- var insts []altInstance
- for rows.Next() {
- var inst altInstance
- if err := rows.Scan(&inst.sdkNo, &inst.port); err != nil {
- continue
- }
- insts = append(insts, inst)
- }
- return insts
+	rows, err := h.DB.Query(
+		"SELECT sdk_no, port FROM sdk_instances WHERE status='RUNNING' AND sdk_no != ? AND port > 0",
+		excludeSdkNo,
+	)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var insts []altInstance
+	for rows.Next() {
+		var inst altInstance
+		if err := rows.Scan(&inst.sdkNo, &inst.port); err != nil {
+			continue
+		}
+		insts = append(insts, inst)
+	}
+	if len(insts) > 1 {
+		rand.Shuffle(len(insts), func(i, j int) { insts[i], insts[j] = insts[j], insts[i] })
+	}
+	return insts
 }
 
 func (h *Handler) smartDeviceInfo(sn string) (json.RawMessage, error) {
@@ -414,5 +435,76 @@ func (h *Handler) HandleTestDeviceInfo(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	h.writeRawJSON(w, http.StatusOK, data)
+ h.writeRawJSON(w, http.StatusOK, data)
+}
+
+func (h *Handler) HandleSetDefSettings(w http.ResponseWriter, r *http.Request) {
+ var req struct {
+ UseTimeout string `json:"use_timeout"`
+ Timeout string `json:"timeout"`
+ UseAutoRestart string `json:"use_auto_restart"`
+ ValAutoRestart string `json:"val_auto_restart"`
+ }
+ if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+ h.writeError(w, http.StatusBadRequest, "invalid JSON")
+ return
+ }
+
+ configs := map[string]string{
+ "setdef_use_timeout": req.UseTimeout,
+ "setdef_timeout": req.Timeout,
+ "setdef_use_auto_restart": req.UseAutoRestart,
+ "setdef_val_auto_restart": req.ValAutoRestart,
+ }
+
+ for key, value := range configs {
+ if value != "" {
+ if _, err := h.DB.Exec(
+ "INSERT OR REPLACE INTO config (key, value, updated_at) VALUES (?, ?, datetime('now'))",
+ key, value,
+ ); err != nil {
+ h.writeError(w, http.StatusInternalServerError, "failed to save config: "+err.Error())
+ return
+ }
+ }
+ }
+
+ if h.SdkMgr == nil {
+ h.writeJSON(w, http.StatusOK, map[string]interface{}{
+ "status": "saved",
+ "message": "Config saved (no SDK manager available)",
+ })
+ return
+ }
+
+ results := h.SdkMgr.InjectSetDefAll()
+
+ if h.Logger != nil {
+ h.Logger.Log("system", "SetDef config updated, injecting to all SDK instances")
+ }
+
+ h.writeJSON(w, http.StatusOK, map[string]interface{}{
+ "status": "applied",
+ "results": results,
+ })
+}
+
+func (h *Handler) HandleLogHistory(w http.ResponseWriter, r *http.Request) {
+ date := r.URL.Query().Get("date")
+ if date == "" {
+ date = time.Now().Format("2006-01-02")
+ }
+
+ if h.FileLogger == nil {
+ h.writeJSON(w, http.StatusOK, []interface{}{})
+ return
+ }
+
+ entries, err := h.FileLogger.ReadLogs(date)
+ if err != nil {
+ h.writeError(w, http.StatusInternalServerError, err.Error())
+ return
+ }
+
+ h.writeJSON(w, http.StatusOK, entries)
 }

@@ -1,6 +1,7 @@
 package services
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -16,13 +18,17 @@ import (
 )
 
 type FServiceProxy struct {
- client *http.Client
+	client *http.Client
+	logger *EventLogger
 }
 
-func NewFServiceProxy() *FServiceProxy {
+var tmplSdkTruncRE = regexp.MustCompile(`"template":"([^"]+)"`)
+
+func NewFServiceProxy(logger *EventLogger) *FServiceProxy {
 	return &FServiceProxy{
+		logger: logger,
 		client: &http.Client{
-			Timeout: 300 * time.Second,
+ Timeout: 900 * time.Second,
 			Transport: &http.Transport{
 				MaxIdleConnsPerHost: 4,
 				IdleConnTimeout:     30 * time.Second,
@@ -71,6 +77,10 @@ func WaitUntilReady(port int, timeout time.Duration) error {
 func (p *FServiceProxy) SendRequest(port int, endpoint string, params url.Values) (json.RawMessage, error) {
  urlStr := fmt.Sprintf("http://127.0.0.1:%d/%s", port, strings.TrimPrefix(endpoint, "/"))
  body := params.Encode()
+
+ if p.logger != nil {
+  p.logger.Log("proxy", fmt.Sprintf("POST %s | %s", urlStr, body))
+ }
 
  req, err := http.NewRequest("POST", urlStr, strings.NewReader(body))
  if err != nil {
@@ -185,9 +195,14 @@ func (p *FServiceProxy) ScanlogAllFull(port int, sn string, limit int, logger *E
 		if err != nil {
 			return nil, err
 		}
-		var page models.ScanlogPagingResponse
-		json.Unmarshal(data, &page)
-		pageNum++
+ var page models.ScanlogPagingResponse
+ if err := json.Unmarshal(data, &page); err != nil {
+ if logger != nil {
+ logger.Log("proxy", fmt.Sprintf("%s scanlog/all parse failed: %v", sn, err))
+ }
+ return nil, fmt.Errorf("scanlog/all parse: %w", err)
+ }
+ pageNum++
 		totalGot += len(page.Data)
 		all = append(all, page.Data...)
 		if !page.IsSession {
@@ -205,9 +220,9 @@ func (p *FServiceProxy) ScanlogAllFull(port int, sn string, limit int, logger *E
 }
 
 func (p *FServiceProxy) UserAllFull(port int, sn string, limit int, logger *EventLogger) (json.RawMessage, error) {
- if limit <= 0 {
- limit = 30
- }
+	if limit <= 0 {
+		limit = 10
+	}
  var all []models.UserEntry
  pageNum := 0
  totalGot := 0
@@ -217,7 +232,12 @@ func (p *FServiceProxy) UserAllFull(port int, sn string, limit int, logger *Even
  return nil, err
  }
  var page models.UserPagingResponse
- json.Unmarshal(data, &page)
+ if err := json.Unmarshal(data, &page); err != nil {
+ if logger != nil {
+ logger.Log("proxy", fmt.Sprintf("%s user/all parse failed: %v", sn, err))
+ }
+ return nil, fmt.Errorf("user/all parse: %w", err)
+ }
  pageNum++
  totalGot += len(page.Data)
  all = append(all, page.Data...)
@@ -240,8 +260,13 @@ func (p *FServiceProxy) SyncScanlog(absenDB *database.DB, port int, sn string, l
 	if err != nil {
 		return nil, err
 	}
-	var devInfo models.DeviceInfoResponse
-	json.Unmarshal(infoData, &devInfo)
+ var devInfo models.DeviceInfoResponse
+ if err := json.Unmarshal(infoData, &devInfo); err != nil {
+ if logger != nil {
+ logger.Log("proxy", fmt.Sprintf("%s dev/info parse failed: %v", sn, err))
+ }
+ return nil, fmt.Errorf("dev/info parse: %w", err)
+ }
  allPresensi := devInfo.GetAllPresensi()
  newPresensi := devInfo.GetNewPresensi()
 
@@ -278,7 +303,11 @@ func (p *FServiceProxy) SyncScanlog(absenDB *database.DB, port int, sn string, l
  newData, newErr := p.ScanlogNew(port, sn)
  if newErr == nil {
  var newPage models.ScanlogPagingResponse
- json.Unmarshal(newData, &newPage)
+ if err := json.Unmarshal(newData, &newPage); err != nil {
+ if logger != nil {
+ logger.Log("proxy", fmt.Sprintf("%s scanlog/new parse failed in fast path: %v", sn, err))
+ }
+ } else {
  fastInserted := 0
  for _, e := range newPage.Data {
  var cnt int
@@ -307,6 +336,7 @@ func (p *FServiceProxy) SyncScanlog(absenDB *database.DB, port int, sn string, l
  if logger != nil {
  logger.Log("proxy", fmt.Sprintf("%s sync fast path partial: +%d new, still gap=%d, falling back to full", sn, fastInserted, allPresensi-fastNewCount))
  }
+ }
  } else if logger != nil {
  logger.Log("proxy", fmt.Sprintf("%s sync fast path error: %v, falling back to full", sn, newErr))
  }
@@ -326,9 +356,14 @@ func (p *FServiceProxy) SyncScanlog(absenDB *database.DB, port int, sn string, l
 		return nil, err
 	}
 
-	var page models.ScanlogPagingResponse
-	json.Unmarshal(data, &page)
-	inserted := 0
+ var page models.ScanlogPagingResponse
+ if err := json.Unmarshal(data, &page); err != nil {
+ if logger != nil {
+ logger.Log("proxy", fmt.Sprintf("%s scanlog/all parse failed in fallback: %v", sn, err))
+ }
+ return nil, fmt.Errorf("scanlog/all parse: %w", err)
+ }
+ inserted := 0
 	for _, e := range page.Data {
 		var cnt int
 		absenDB.QueryRow(
@@ -382,7 +417,13 @@ func (p *FServiceProxy) SyncScanlogNew(absenDB *database.DB, port int, sn string
  Result bool `json:"Result"`
  Data []models.ScanlogEntry `json:"Data"`
  }
- json.Unmarshal(data, &newData)
+ if err := json.Unmarshal(data, &newData); err != nil {
+ absenDB.Exec("UPDATE device_info SET scanlog_status = 'stale', updated_at = datetime('now') WHERE sn = ?", sn)
+ if logger != nil {
+ logger.Log("proxy", fmt.Sprintf("%s scanlog-new parse failed: %v", sn, err))
+ }
+ return nil, fmt.Errorf("scanlog/new parse: %w", err)
+ }
  inserted := 0
  for _, e := range newData.Data {
  var cnt int
@@ -411,9 +452,9 @@ func (p *FServiceProxy) SyncScanlogNew(absenDB *database.DB, port int, sn string
  return result, nil
 }
 
-func (p *FServiceProxy) SyncUsersFull(absenDB *database.DB, port int, sn string, limit int, logger *EventLogger) (json.RawMessage, error) {
+func (p *FServiceProxy) SyncUsersFull(absenDB *database.DB, port int, sn string, limit int, sdkNo int, logger *EventLogger) (json.RawMessage, error) {
  if limit <= 0 {
- limit = 30
+ limit = 10
  }
 
  absenDB.Exec("INSERT OR IGNORE INTO device_info (sn, user_count) VALUES (?, 0)", sn)
@@ -423,51 +464,174 @@ func (p *FServiceProxy) SyncUsersFull(absenDB *database.DB, port int, sn string,
  logger.Log("proxy", fmt.Sprintf("%s users sync start", sn))
  }
 
- data, err := p.UserAllFull(port, sn, limit, logger)
- if err != nil {
+	// Data existing dipertahankan — no DELETE (AD-041)
+
+	pageNum := 0
+ totalGot := 0
+ for {
+		data, err := p.UserAll(port, sn, limit)
+		if err != nil {
+			absenDB.Exec("UPDATE device_info SET user_status = 'stale', updated_at = datetime('now') WHERE sn = ?", sn)
+			if logger != nil {
+				logger.Log("proxy", fmt.Sprintf("%s users sync failed: %v", sn, err))
+			}
+			return nil, err
+		}
+
+		if logger != nil {
+			rawStr := tmplSdkTruncRE.ReplaceAllStringFunc(string(data), func(match string) string {
+				val := match[12 : len(match)-1]
+				if len(val) > 20 {
+					return fmt.Sprintf(`"template":"%s..."`, val[:20])
+				}
+				return match
+			})
+ logger.Log(fmt.Sprintf("sdk-%d", sdkNo), fmt.Sprintf("%s user/all/paging response: %s", sn, rawStr))
+		}
+
+		var page models.UserPagingResponse
+		if err := json.Unmarshal(data, &page); err != nil {
+			absenDB.Exec("UPDATE device_info SET user_status = 'stale', updated_at = datetime('now') WHERE sn = ?", sn)
+			if logger != nil {
+				logger.Log("proxy", fmt.Sprintf("%s user/all parse failed: %v", sn, err))
+			}
+			return nil, fmt.Errorf("user/all parse: %w", err)
+		}
+	pageNum++
+
+		if pageNum == 1 && IsBusyResponse(data) {
+			absenDB.Exec("UPDATE device_info SET user_status = 'stale', updated_at = datetime('now') WHERE sn = ?", sn)
+			if logger != nil {
+				logger.Log("proxy", fmt.Sprintf("%s users sync busy (message_code:3)", sn))
+			}
+			return nil, ErrFServiceBusy
+		}
+
+		if pageNum == 1 && len(page.Data) == 0 {
+			absenDB.Exec("UPDATE device_info SET user_status = 'stale', updated_at = datetime('now') WHERE sn = ?", sn)
+			if logger != nil {
+				logger.Log("proxy", fmt.Sprintf("%s users sync abort: FService returned 0 users, preserving existing data", sn))
+			}
+			return nil, fmt.Errorf("FService returned 0 users")
+		}
+
+		for _, e := range page.Data {
+			if err := p.upsertUser(absenDB, sn, e); err != nil {
+				if logger != nil {
+					logger.Log("proxy", fmt.Sprintf("%s user upsert failed for pin=%s: %v", sn, e.PIN, err))
+				}
+			}
+		}
+
+ var count int
+ absenDB.QueryRow("SELECT COUNT(*) FROM \"user\" WHERE sn = ?", sn).Scan(&count)
+ absenDB.Exec("UPDATE device_info SET user_count = ? WHERE sn = ?", count, sn)
+
+ totalGot += len(page.Data)
  if logger != nil {
- logger.Log("proxy", fmt.Sprintf("%s users sync failed: %v", sn, err))
+ logger.Log("proxy", fmt.Sprintf("%s users sync page=%d got=%d total=%d", sn, pageNum, len(page.Data), totalGot))
  }
- return nil, err
+ if !page.IsSession {
+ break
+ }
  }
 
- var page models.UserPagingResponse
- json.Unmarshal(data, &page)
-	absenDB.Exec("DELETE FROM template WHERE user_id IN (SELECT id FROM \"user\" WHERE sn = ?)", sn)
-	absenDB.Exec("DELETE FROM \"user\" WHERE sn = ?", sn)
+ var count int
+ absenDB.QueryRow("SELECT COUNT(*) FROM \"user\" WHERE sn = ?", sn).Scan(&count)
 
-	userCount := 0
-	for _, e := range page.Data {
-		res, err := absenDB.Exec(
-			"INSERT INTO \"user\" (sn, pin, name, rfid, password, privilege) VALUES (?, ?, ?, ?, ?, ?)",
+ var info models.AbsenDeviceInfo
+ err := absenDB.QueryRow(
+ "SELECT sn FROM device_info WHERE sn = ?", sn,
+ ).Scan(&info.SN)
+ if err != nil {
+ absenDB.Exec("INSERT OR IGNORE INTO device_info (sn, user_count, user_status) VALUES (?, ?, 'idle')", sn, count)
+ } else {
+ absenDB.Exec("UPDATE device_info SET user_count = ?, user_status = 'idle', last_user_sync = datetime('now'), updated_at = datetime('now') WHERE sn = ?", count, sn)
+ }
+
+ if logger != nil {
+ logger.Log("proxy", fmt.Sprintf("%s users sync done: %d users", sn, count))
+ }
+
+	result, _ := json.Marshal(map[string]interface{}{"status": "synced", "user_count": count})
+	return result, nil
+}
+
+func (p *FServiceProxy) upsertUser(absenDB *database.DB, sn string, e models.UserEntry) error {
+	var existingID int
+	var existingName, existingRFID, existingPassword string
+	var existingPrivilege int
+	err := absenDB.QueryRow(
+		`SELECT id, name, rfid, password, privilege FROM "user" WHERE sn = ? AND pin = ?`,
+		sn, e.PIN,
+	).Scan(&existingID, &existingName, &existingRFID, &existingPassword, &existingPrivilege)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		res, execErr := absenDB.Exec(
+			`INSERT INTO "user" (sn, pin, name, rfid, password, privilege) VALUES (?, ?, ?, ?, ?, ?)`,
 			sn, e.PIN, e.Name, e.RFID, e.Password, e.Privilege,
 		)
-		if err == nil {
-			userID, _ := res.LastInsertId()
-			for _, t := range e.Templates {
-				absenDB.Exec(
-					"INSERT INTO template (user_id, finger_idx, alg_ver, template) VALUES (?, ?, ?, ?)",
-					userID, t.FingerIdx, t.AlgVer, t.Template,
-				)
+		if execErr != nil {
+			return fmt.Errorf("insert user: %w", execErr)
+		}
+		userID, _ := res.LastInsertId()
+		for _, t := range e.Templates {
+			absenDB.Exec(
+				"INSERT INTO template (user_id, finger_idx, alg_ver, template) VALUES (?, ?, ?, ?)",
+				userID, t.FingerIdx, t.AlgVer, t.Template,
+			)
+		}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("query user: %w", err)
+	}
+
+	if existingName != e.Name || existingRFID != e.RFID || existingPassword != e.Password || existingPrivilege != e.Privilege {
+		absenDB.Exec(
+			`UPDATE "user" SET name = ?, rfid = ?, password = ?, privilege = ? WHERE id = ?`,
+			e.Name, e.RFID, e.Password, e.Privilege, existingID,
+		)
+	}
+
+	type existingTemplate struct {
+		fingerIdx int
+		algVer    int
+		template  string
+	}
+	var existingTemplates []existingTemplate
+	rows, err := absenDB.Query("SELECT finger_idx, alg_ver, template FROM template WHERE user_id = ?", existingID)
+	if err == nil {
+		for rows.Next() {
+			var et existingTemplate
+			if scanErr := rows.Scan(&et.fingerIdx, &et.algVer, &et.template); scanErr == nil {
+				existingTemplates = append(existingTemplates, et)
 			}
-			userCount++
+		}
+		rows.Close()
+	}
+
+	for _, t := range e.Templates {
+		found := false
+		for _, et := range existingTemplates {
+			if et.fingerIdx == t.FingerIdx {
+				found = true
+				if et.algVer != t.AlgVer || et.template != t.Template {
+					absenDB.Exec(
+						"UPDATE template SET alg_ver = ?, template = ? WHERE user_id = ? AND finger_idx = ?",
+						t.AlgVer, t.Template, existingID, t.FingerIdx,
+					)
+				}
+				break
+			}
+		}
+		if !found {
+			absenDB.Exec(
+				"INSERT INTO template (user_id, finger_idx, alg_ver, template) VALUES (?, ?, ?, ?)",
+				existingID, t.FingerIdx, t.AlgVer, t.Template,
+			)
 		}
 	}
 
-	var info models.AbsenDeviceInfo
-	err = absenDB.QueryRow(
-		"SELECT sn FROM device_info WHERE sn = ?", sn,
-	).Scan(&info.SN)
- if err != nil {
- absenDB.Exec("INSERT OR IGNORE INTO device_info (sn, user_count, user_status) VALUES (?, ?, 'idle')", sn, userCount)
- } else {
- absenDB.Exec("UPDATE device_info SET user_count = ?, user_status = 'idle', last_user_sync = datetime('now'), updated_at = datetime('now') WHERE sn = ?", userCount, sn)
- }
-
- if logger != nil {
- logger.Log("proxy", fmt.Sprintf("%s users sync done: %d users", sn, userCount))
- }
-
- result, _ := json.Marshal(map[string]interface{}{"status": "synced", "user_count": userCount})
-	return result, nil
+	return nil
 }

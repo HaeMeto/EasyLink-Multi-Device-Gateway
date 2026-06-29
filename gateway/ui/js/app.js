@@ -12,8 +12,15 @@ function app() {
   deviceDetail: {},
   opResult: '',
  syncInterval: 60,
+ setdefUseTimeout: '-1',
+ setdefTimeout: '5000',
+ setdefUseAutoRestart: '0',
+ setdefValAutoRestart: '23:00',
+ historyDate: '',
+ historyLogs: [],
+ logMode: 'live',
  scanlogPage: { sn: '', data: [], total: 0, page: 1, size: 50, status: {}, compare: {scanlog: {}, users: {}}, syncing: false, comparing: false, sdkNo: '', _pollTimer: null },
-  usersPage: { sn: '', data: [], total: 0, page: 1, size: 50, status: {}, compare: {scanlog: {}, users: {}}, syncing: false, sdkNo: '', comparing: false, _pollTimer: null, syncLimit: 30 },
+  usersPage: { sn: '', data: [], total: 0, page: 1, size: 50, status: {}, compare: {scanlog: {}, users: {}}, syncing: false, sdkNo: '', comparing: false, _pollTimer: null, syncLimit: 10 },
  testPage: { sn: '', sdkNo: '', result: '', loading: false },
 
  isDeviceDetail() {
@@ -270,7 +277,7 @@ async doSyncScanlog() {
  try {
  const r = await fetch('/api/devices/' + encodeURIComponent(sn) + '/absen/users?page=' + self.usersPage.page + '&size=' + self.usersPage.size);
  const d = await r.json();
- self.usersPage.data = d.data || [];
+ self.usersPage.data = (d.data || []).map(u => ({ ...u, _expanded: false, _templates: null }));
  self.usersPage.total = d.total || 0;
  } catch (e) { self.usersPage.data = []; self.usersPage.total = 0; }
  },
@@ -312,7 +319,7 @@ async doSyncScanlog() {
  const r = await fetch('/api/config');
  const data = await r.json();
  const cfg = data.find(c => c.key === 'user_sync_limit');
- if (cfg) self.usersPage.syncLimit = parseInt(cfg.value) || 30;
+ if (cfg) self.usersPage.syncLimit = parseInt(cfg.value) || 10;
  } catch (e) {}
  await this.fetchUsersPage();
  await this.fetchUsersStatus();
@@ -323,13 +330,17 @@ async doSyncScanlog() {
  self.usersPage.syncing = true;
  this.startUsersProgressPoll();
  try {
- const r = await fetch('/api/devices/' + encodeURIComponent(sn) + '/users/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sdk_no: parseInt(self.usersPage.sdkNo) || 0, limit: self.usersPage.syncLimit }) });
+ const r = await fetch('/api/devices/' + encodeURIComponent(sn) + '/users/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sdk_no: parseInt(self.usersPage.sdkNo) || 0, limit: self.usersPage.syncLimit, device_users: self.usersPage.compare.users?.device || 0 }) });
  const data = await r.json();
- if (r.ok) {
+ if (!r.ok) throw new Error(data.error || r.statusText);
+ if (data.status === 'started') {
+ self.toast = { show: true, msg: 'Sync started...', type: 'success' };
+ setTimeout(() => { self.toast.show = false }, 3000);
+ return;
+ }
  const msg = data.user_count !== undefined ? ('Sync complete: ' + data.user_count + ' users') : ('Sync complete: ' + (data.status || 'OK'));
  self.toast = { show: true, msg: msg, type: 'success' };
  setTimeout(() => { self.toast.show = false }, 3000);
- }
  } catch (e) {
  self.toast = { show: true, msg: 'Sync failed: ' + (e.message || e), type: 'error' };
  setTimeout(() => { self.toast.show = false }, 3000);
@@ -361,6 +372,12 @@ async doSyncScanlog() {
  if (!self.usersPage.syncing) { this.stopUsersProgressPoll(); return; }
  await this.fetchUsersStatus(parseInt(self.usersPage.sdkNo) || 0);
  await this.fetchUsersPage();
+ if (self.usersPage.status.user_status !== 'syncing') {
+ self.usersPage.syncing = false;
+ this.stopUsersProgressPoll();
+ await this.fetchUsersPage();
+ await this.fetchUsersStatus(parseInt(self.usersPage.sdkNo) || 0);
+ }
  }, 2000);
  },
  stopUsersProgressPoll() {
@@ -391,13 +408,30 @@ async doSyncScanlog() {
  self.testPage.loading = false;
  },
 
- async fetchUserTemplates(sn, pin) {
- try {
- const r = await fetch('/api/devices/' + encodeURIComponent(sn) + '/users/' + encodeURIComponent(pin) + '/templates');
- return await r.json();
- } catch (e) { return []; }
- },
- });
+async fetchUserTemplates(sn, pin) {
+try {
+const r = await fetch('/api/devices/' + encodeURIComponent(sn) + '/users/' + encodeURIComponent(pin) + '/templates');
+return await r.json();
+} catch (e) { return []; }
+},
+
+async saveUserSyncLimit() {
+try {
+const r = await fetch('/api/config', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key: 'user_sync_limit', value: String(self.usersPage.syncLimit) }),
+});
+if (r.ok) {
+    self.toast = { show: true, msg: 'User sync limit updated', type: 'success' };
+    setTimeout(() => { self.toast.show = false }, 3000);
+}
+} catch (e) {
+self.toast = { show: true, msg: 'Failed to update config', type: 'error' };
+setTimeout(() => { self.toast.show = false }, 3000);
+}
+},
+});
 
  this.store = store;
 
@@ -441,8 +475,10 @@ async doSyncScanlog() {
  store.fetchInstances();
  } else if (this.route === '/logs') {
  store.startLogStream();
+ this.historyDate = new Date().toISOString().split('T')[0];
  } else if (this.route === '/settings') {
  this.loadConfig();
+ this.loadSetDefConfig();
  }
 
  this.loaded = true;
@@ -544,31 +580,69 @@ async doSyncScanlog() {
  setTimeout(() => { this.toast.show = false }, 3000);
  }
  },
- async saveUserSyncLimit() {
- try {
- const self = this;
- const r = await fetch('/api/config', {
- method: 'PUT',
- headers: { 'Content-Type': 'application/json' },
- body: JSON.stringify({ key: 'user_sync_limit', value: String(self.usersPage.syncLimit) }),
- });
- if (r.ok) {
- self.toast = { show: true, msg: 'User sync limit updated', type: 'success' };
- setTimeout(() => { self.toast.show = false }, 3000);
- }
- } catch (e) {
- this.toast = { show: true, msg: 'Failed to update config', type: 'error' };
- setTimeout(() => { this.toast.show = false }, 3000);
- }
- },
  async loadUserSyncLimit() {
  try {
  const self = this;
  const r = await fetch('/api/config');
  const data = await r.json();
  const cfg = data.find(c => c.key === 'user_sync_limit');
- if (cfg) self.usersPage.syncLimit = parseInt(cfg.value) || 30;
+ if (cfg) self.usersPage.syncLimit = parseInt(cfg.value) || 10;
  } catch (e) {}
+ },
+ async loadSetDefConfig() {
+ try {
+ const r = await fetch('/api/config');
+ const data = await r.json();
+ const ut = data.find(c => c.key === 'setdef_use_timeout');
+ if (ut) this.setdefUseTimeout = ut.value;
+ const t = data.find(c => c.key === 'setdef_timeout');
+ if (t) this.setdefTimeout = t.value;
+ const uar = data.find(c => c.key === 'setdef_use_auto_restart');
+ if (uar) this.setdefUseAutoRestart = uar.value;
+ const var_ = data.find(c => c.key === 'setdef_val_auto_restart');
+ if (var_) this.setdefValAutoRestart = var_.value;
+ } catch (e) {}
+ },
+ async saveSetDefConfig() {
+ try {
+ this.toast = { show: true, msg: 'Settings saved. Applying to SDKs...', type: 'success' };
+ const r = await fetch('/api/settings/setdef', {
+ method: 'POST',
+ headers: { 'Content-Type': 'application/json' },
+ body: JSON.stringify({
+ use_timeout: this.setdefUseTimeout,
+ timeout: this.setdefTimeout,
+ use_auto_restart: this.setdefUseAutoRestart,
+ val_auto_restart: this.setdefValAutoRestart,
+ }),
+ });
+ if (r.ok) {
+ const data = await r.json();
+ const msg = data.results ? 'Settings applied: ' + data.results.join(', ') : 'Settings saved';
+ this.toast = { show: true, msg: msg, type: 'success' };
+ } else {
+ this.toast = { show: true, msg: 'Failed to save settings', type: 'error' };
+ }
+ setTimeout(() => { this.toast.show = false }, 3000);
+ } catch (e) {
+ this.toast = { show: true, msg: 'Failed to save settings', type: 'error' };
+ setTimeout(() => { this.toast.show = false }, 3000);
+ }
+ },
+ async loadLogHistory() {
+ try {
+ const r = await fetch('/api/logs/history?date=' + encodeURIComponent(this.historyDate));
+ if (r.ok) {
+ this.historyLogs = await r.json();
+ this.logMode = 'history';
+ }
+ } catch (e) {
+ this.toast = { show: true, msg: 'Failed to load log history', type: 'error' };
+ setTimeout(() => { this.toast.show = false }, 3000);
+ }
+ },
+ switchToLive() {
+ this.logMode = 'live';
  },
  };
 }

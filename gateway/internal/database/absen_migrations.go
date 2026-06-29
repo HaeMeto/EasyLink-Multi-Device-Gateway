@@ -2,7 +2,7 @@ package database
 
 import "fmt"
 
-const absenCurrentVersion = 2
+const absenCurrentVersion = 3
 
 func (db *DB) AbsenMigrate() error {
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_version (
@@ -33,8 +33,10 @@ func (db *DB) runAbsenMigration(version int) error {
 	switch version {
 	case 1:
 		err = db.absenV1()
-	case 2:
-		err = db.absenV2()
+ case 2:
+ err = db.absenV2()
+ case 3:
+ err = db.absenV3()
 	default:
 		return fmt.Errorf("unknown absen migration version %d", version)
 	}
@@ -99,6 +101,63 @@ func (db *DB) absenV1() error {
 func (db *DB) absenV2() error {
  _, err := db.Exec("ALTER TABLE device_info ADD COLUMN user_status TEXT DEFAULT 'idle'")
  return err
+}
+
+func (db *DB) absenV3() error {
+ if _, err := db.Exec(`
+  CREATE TABLE user_v3 (
+   id INTEGER PRIMARY KEY AUTOINCREMENT,
+   sn TEXT NOT NULL,
+   pin TEXT NOT NULL,
+   name TEXT DEFAULT '',
+   rfid TEXT DEFAULT '',
+   password TEXT DEFAULT '',
+   privilege INTEGER DEFAULT 0,
+   created_at TEXT DEFAULT (datetime('now')),
+   UNIQUE(sn, pin)
+  );
+  INSERT INTO user_v3 SELECT id, sn, pin, name, rfid, password, CAST(privilege AS INTEGER), created_at FROM "user";
+  DROP TABLE "user";
+  ALTER TABLE user_v3 RENAME TO "user";
+ `); err != nil {
+  return fmt.Errorf("rebuild user: %w", err)
+ }
+
+ if _, err := db.Exec(`
+  CREATE TABLE template_v3 (
+   id INTEGER PRIMARY KEY AUTOINCREMENT,
+   user_id INTEGER REFERENCES "user"(id) ON DELETE CASCADE,
+   finger_idx INTEGER DEFAULT 0,
+   alg_ver INTEGER DEFAULT 0,
+   template TEXT DEFAULT ''
+  );
+  INSERT INTO template_v3 SELECT id, user_id, CAST(finger_idx AS INTEGER), CAST(alg_ver AS INTEGER), template FROM template;
+  DROP TABLE template;
+  ALTER TABLE template_v3 RENAME TO template;
+ `); err != nil {
+  return fmt.Errorf("rebuild template: %w", err)
+ }
+
+ if _, err := db.Exec(`
+  CREATE TABLE scanlog_v3 (
+   id INTEGER PRIMARY KEY AUTOINCREMENT,
+   sn TEXT NOT NULL,
+   scan_date TEXT NOT NULL,
+   pin TEXT NOT NULL,
+   verify_mode INTEGER DEFAULT 0,
+   io_mode INTEGER DEFAULT 0,
+   work_code INTEGER DEFAULT 0,
+   created_at TEXT DEFAULT (datetime('now')),
+   UNIQUE(sn, scan_date, pin)
+  );
+  INSERT INTO scanlog_v3 SELECT id, sn, scan_date, pin, CAST(verify_mode AS INTEGER), CAST(io_mode AS INTEGER), CAST(work_code AS INTEGER), created_at FROM scanlog;
+  DROP TABLE scanlog;
+  ALTER TABLE scanlog_v3 RENAME TO scanlog;
+ `); err != nil {
+  return fmt.Errorf("rebuild scanlog: %w", err)
+ }
+
+ return nil
 }
 
 func (db *DB) Repair() error {

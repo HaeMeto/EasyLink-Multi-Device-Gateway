@@ -1,6 +1,6 @@
 # EasyLink Gateway — Implementation Plan
 
-## Status: DONE (Phase D-W, X, R, S, C, F, G, H, Z, I) ✅
+## Status: DONE (Phase D-W, X, R, S, C, F, G, H, Z, I, J, K, Y, Z2, Z3, 6-9) ✅
 
 ---
 
@@ -25,6 +25,11 @@
 | BUG-B5 | Bug | No success toast for Sync Now | ✅ |
 | BUG-B6 | Bug | INSERT OR IGNORE only checks UNIQUE(sn,scan_date,pin), not all fields | ✅ |
 | FEAT-H | Feature | Users page — model scanlog (instance dropdown, status badge, progress bar, compare, sdk_no, polling, toast) | ✅ |
+| BUG-J1 | Bug | TemplateEntry UnmarshalJSON fails on JSON number idx/alg_ver | ✅ |
+| BUG-K1 | Bug | User sync deadlock — `already_synced` after partial sync failure | ✅ |
+| BUG-K2 | Bug | Template expand row not visible — Alpine proxy tracking fail | ✅ |
+| BUG-Z2 | Bug | User data loss via delete-before-insert pattern (Phase Z2) | ✅ |
+| FEAT-Z3 | Feature | [sdk] log template truncation (Phase Z3) | ✅ |
 
 ---
 
@@ -1362,3 +1367,409 @@ Key notes:
 - `go build ./...` clean
 - `go vet ./...` clean
 - `build.ps1` success
+
+---
+
+## Phase O: Type Mismatch Fix + Silent Error Elimination — DONE ✅
+
+### Overview
+
+Bug: `Privilege: string` vs JSON integer → `json.Unmarshal` silent fail → `page.Data` empty → user sync returns 0 users. Ditambah `FingerIdx`/`AlgVer: string` vs JSON string `"13"`/`"39"`. Scanlog columns `verify_mode`/`io_mode`/`work_code`: TEXT padahal semantik integer. 9 lokasi `json.Unmarshal` tanpa error handling.
+
+### Phase 1 — Fix Type Mismatch — DONE ✅
+- `finger.go`: `UserEntry.Privilege` string→int, `TemplateEntry.FingerIdx`/`AlgVer` string→int + custom `UnmarshalJSON`
+
+### Phase 2 — DB Migration v3 — DONE ✅
+- `absen_migrations.go`: bump v2→v3, `absenV3()` rebuild user/template/scanlog dengan INTEGER columns
+
+### Phase 3 — Query Verification — DONE ✅
+- No query changes needed — Go int types now match INTEGER columns automatically
+
+### Phase 4 — Silent Error Elimination — DONE ✅
+- 7 fservice.go locations: ScanlogAllFull, UserAllFull, SyncScanlog (×3), SyncScanlogNew, SyncUsersFull
+- 1 syncer.go: doDeviceSync ScanlogNew unmarshal
+- 1 absen.go: HandleAbsenCompare dev/info unmarshal
+
+### Phase 5 — Memory.md Update — DONE ✅
+- AD-032: No Silent Parsing
+- AD-033: Absen DB Integer Columns
+- AD-034: User/Template Struct Type Alignment
+
+### Files Modified
+- `gateway/internal/models/finger.go`
+- `gateway/internal/database/absen_migrations.go`
+- `gateway/internal/services/fservice.go`
+- `gateway/internal/services/syncer.go`
+- `gateway/internal/handlers/absen.go`
+- `memory.md`
+- `plan.md`
+
+### Protected Areas Verified
+- watchdog.go — untouched ✅
+- sdk_manager.go — untouched ✅
+- queue.go — untouched ✅
+- database.go — untouched ✅
+- migrations.go — untouched ✅
+- config/ — untouched ✅
+- templates/ — untouched ✅
+- main.go — untouched ✅
+- app.js — untouched ✅
+
+### Build Result
+- `go build ./...` — clean
+- `go vet ./...` — clean
+- `build.ps1` — success (binary OK)
+
+### Audit Resolution (2026-06-25)
+
+| Finding | Fix | Status |
+|---------|-----|--------|
+| MV-1: Duplicate Phase O entry memory.md:498 | Removed | FIXED |
+| MV-2: "Phase P" naming in memory.md:497 | Changed to "Phase O" | FIXED |
+
+---
+
+## Phase J: TemplateEntry UnmarshalJSON json.Number Fix — DONE ✅
+
+### Overview
+
+Bug: `TemplateEntry.UnmarshalJSON` declares raw intermediate struct with `FingerIdx string` and `AlgVer string`. Go's `encoding/json` cannot unmarshal JSON number (`"idx": 1`) into Go `string` — it strictly requires JSON string (`"idx": "1"`). When upstream device/FService sends `idx`/`alg_ver` as JSON numbers instead of strings, `json.Unmarshal` at finger.go:81 fails.
+
+**Root cause:** `finger.go:76-78` — raw struct field types `string` don't accept JSON numbers.
+
+### Phase 1 — Fix raw struct to use json.Number — DONE ✅
+
+- `finger.go`: Changed raw struct `FingerIdx string` → `FingerIdx json.Number`, `AlgVer string` → `AlgVer json.Number`
+- Convert via `.String()` + `strconv.Atoi` (handles both `1` [number] and `"1"` [string])
+
+### Files Modified
+- `gateway/internal/models/finger.go`
+
+### Functions Modified
+- `models.TemplateEntry.UnmarshalJSON()`
+
+### Protected Areas Verified
+- watchdog.go — untouched ✅
+- sdk_manager.go — untouched ✅
+- queue.go — untouched ✅
+- database.go — untouched ✅
+- migrations.go — untouched ✅
+- absen_migrations.go — untouched ✅
+- config/ — untouched ✅
+- services/fservice.go — untouched ✅
+- services/syncer.go — untouched ✅
+- handlers/ — untouched ✅
+- main.go — untouched ✅
+- app.js — untouched ✅
+- templates/ — untouched ✅
+
+### Build Result
+- `go build ./...` — clean
+- `go vet ./...` — clean
+- `build.ps1` — success (binary OK)
+
+---
+
+## Phase Y: User Sync Mismatch Guard & Template Expand — DONE ✅
+
+### Overview
+
+Dua bug ditemukan pada Users page:
+1. **Sync deadlock** — after partial sync failure, handler returns `"already_synced"` karena guard membandingkan `device_info.user_count` (stale cache) vs `COUNT(*)` (partial)
+2. **Template expand row not visible** — Alpine reactivity: `_expanded`/`_templates` tidak di-preinitialize saat data dimuat
+
+### K1: Sync Error Status Reset + Mismatch Guard Bypass — DONE ✅
+
+- `fservice.go:470-474,477-483`: Set `user_status='stale'` pada error path `SyncUsersFull`
+- `absen.go:190-220`: Tambah `DeviceUsers` field + bypass guard (mirror AD-031 scanlog pattern)
+- `app.js:326`: Kirim `device_users` dari compare data di `doSyncUsers()`
+
+### K2: Alpine Template Expand Reactivity Fix — DONE ✅
+
+- `app.js:273`: Pre-initialize `_expanded: false, _templates: null` via `.map()` di `fetchUsersPage()`
+
+### Files Modified
+- `gateway/internal/services/fservice.go`
+- `gateway/internal/handlers/absen.go`
+- `gateway/ui/js/app.js`
+
+### Functions Modified
+- `fservice.go > SyncUsersFull()`
+- `absen.go > HandleAbsenSyncUsers()`
+- `app.js > fetchUsersPage()`
+- `app.js > doSyncUsers()`
+
+### APIs Modified
+- `POST /api/devices/{sn}/users/sync` — request body + `device_users: int` (optional)
+
+### Protected Areas Verified
+- queue.go — untouched ✅
+- syncer.go — untouched ✅
+- sdk_manager.go — untouched ✅
+- watchdog.go — untouched ✅
+- database/ — untouched ✅
+- config/ — untouched ✅
+- models/ — untouched ✅
+- handlers/handler.go — untouched ✅
+- handlers/user.go — untouched ✅
+- handlers/device.go — untouched ✅
+- handlers/scanlog.go — untouched ✅
+- handlers/instance.go — untouched ✅
+- handlers/config.go — untouched ✅
+- main.go — untouched ✅
+- templates/pages/users.html — untouched ✅
+- app.css — untouched ✅
+
+### Build Result
+- `build.ps1` — success (binary OK)
+
+### Architecture Decisions Added
+- AD-038: User Sync Mismatch Guard (FINAL)
+- AD-039: Sync Error Status Reset (FINAL)
+- AD-040: Alpine Property Pre-Initialization (FINAL)
+
+---
+
+## Phase Z2: User Sync Upsert (No Delete) — DONE ✅
+
+### Overview
+
+Redesign `SyncUsersFull` dari pattern delete-all-then-insert menjadi compare-and-upsert. Menghilangkan semua operasi DELETE dan mengganti INSERT dengan existence check + compare + conditional UPDATE/INSERT. Menambahkan log `[sdk]` untuk raw FService response.
+
+### Z2-T1: Hapus DELETE Statements ✅
+- `fservice.go:463-464`: hapus `DELETE FROM template` + `DELETE FROM "user"`
+- Diganti comment "Data existing dipertahankan — no DELETE (AD-041)"
+
+### Z2-T2: Tambah [sdk] Log Raw Response ✅
+- Sebelum unmarshal, log `[sdk]` dengan raw FService response (truncated 500 chars)
+- Format: `logger.Log("sdk", "%s user/all/paging response: %s", sn, truncated)`
+
+### Z2-T3: Page 1 Empty Abort ✅
+- `pageNum == 1 && len(page.Data) == 0` → set user_status='stale' → return error
+- Log: `"%s users sync abort: FService returned 0 users"`
+
+### Z2-T4: Ganti INSERT dengan upsertUser() ✅
+- Loop `for _, e := range page.Data` sekarang panggil `p.upsertUser(absenDB, sn, e)`
+- Error per-user tidak mengabortkan sync — skip user, lanjut ke berikutnya
+
+### Z2-T5: Implementasi upsertUser() ✅
+- Private method pada `*FServiceProxy`
+- Existence check user by (sn, pin) → INSERT jika tidak ada → compare name/rfid/password/privilege → conditional UPDATE
+- Query existing template per user_id → compare by finger_idx → conditional INSERT/UPDATE/skip
+- Template existing di DB yang tidak muncul di FService response dipertahankan
+
+### Z2-T6-T8: Pertahankan Error Path + Progress + Finalization ✅
+- Error path (AD-039): user_status='stale' pada UserAll/unmarshal/empty abort
+- Incremental progress (AD-035): COUNT(*) + UPDATE user_count per halaman
+- Finalization: COUNT(*) + user_status='idle' + last_user_sync
+- Function signature `SyncUsersFull(absenDB, port, sn, limit, logger)` tetap sama
+
+### Files Modified
+- `gateway/internal/services/fservice.go` — `SyncUsersFull()` rewrite body + `upsertUser()` new private method
+
+### Functions Modified
+- `fservice.go > SyncUsersFull()` — hapus DELETE, ganti INSERT dengan upsertUser(), tambah [sdk] log, page-1-empty abort
+- `fservice.go > upsertUser()` — NEW private method
+
+### APIs Modified
+None.
+
+### Protected Areas Verified
+- all handlers — untouched ✅
+- queue.go — untouched ✅
+- syncer.go — untouched ✅
+- sdk_manager.go — untouched ✅
+- watchdog.go — untouched ✅
+- database/ — untouched ✅
+- models/ — untouched ✅
+- main.go — untouched ✅
+- templates/ — untouched ✅
+- app.js — untouched ✅
+
+### Build Result
+- `go build ./...` — clean
+- `go vet ./...` — clean
+- `build.ps1` — success (binary OK, copy blocked by running process)
+
+### Architecture Decisions Added
+- AD-041: User Sync Upsert Without Delete (FINAL)
+
+---
+
+## Phase Z3: [sdk] Log Template Truncation — DONE ✅
+
+### Overview
+
+Refine `[sdk]` log di `SyncUsersFull` dari 500-char brute truncate menjadi regex-based truncate khusus pada nilai field `"template":"<hex>"`. Menjaga struktur JSON tetap utuh, mengurangi log spam dari ~300KB/halaman menjadi ~500 bytes/halaman.
+
+### Z3-T1: Tambah regexp Import + Compile Regex ✅
+- `fservice.go:12`: tambah `"regexp"` import
+- `fservice.go:25`: tambah `var tmplSdkTruncRE = regexp.MustCompile(\`"template":"([^"]+)"\`)` package-level
+
+### Z3-T2: Ganti Truncate 500 Chars dengan Regex Replace ✅
+- `fservice.go:481-490`: ganti `if len(rawStr) > 500 { rawStr = rawStr[:500] }` dengan `tmplSdkTruncRE.ReplaceAllStringFunc`
+- Template hex >20 char → truncated jadi `"45:4E:52:4C:50:4D:56..."`
+- Template hex <=20 char → tidak truncated, return match utuh
+- Tidak ada match regex → string pass unchanged
+
+### Files Modified
+- `gateway/internal/services/fservice.go` — +1 import, +1 regex var, ~8 line change in `SyncUsersFull()`
+
+### Functions Modified
+- `fservice.go > SyncUsersFull()` — blok `[sdk]` log (lines 481-490)
+
+### APIs Modified
+None.
+
+### Protected Areas Verified
+- all handlers — untouched ✅
+- queue.go — untouched ✅
+- syncer.go — untouched ✅
+- sdk_manager.go — untouched ✅
+- watchdog.go — untouched ✅
+- database/ — untouched ✅
+- models/ — untouched ✅
+- main.go — untouched ✅
+- templates/ — untouched ✅
+- app.js — untouched ✅
+
+### Build Result
+- `go build ./...` — clean
+- `go vet ./...` — clean
+
+### Architecture Decisions Added
+None — refinement of existing [sdk] log (AD-041).
+
+========================================
+=== PHASE 6-9: BUSY Variants + Smart Route + Lifecycle ===
+=== Status: COMPLETED (2026-06-26) ===
+========================================
+
+### Audit Verdict: APPROVED_WITH_MINOR_FIXES → FIXED
+
+BUG-001 (FIXED): Double cleanup di queue.go processJob untuk user/sync-full.
+
+### Tasks Completed (19/19)
+| Phase | Tasks | Status |
+|-------|-------|--------|
+| 6a | BUSY constants + IsBusyStatus | ✅ |
+| 6b | Migration v8 (max_spawn_sdk=10) | ✅ |
+| 6c | Syncer BUSY-SCANLOG lifecycle | ✅ |
+| 6d-1 | Queue scanlog/sync BUSY lifecycle + WorkerBusy | ✅ |
+| 6d-2 | Queue user/sync-full BUSY lifecycle + WorkerBusy | ✅ |
+| 6d-3 | Fast action BUSY/ERROR guard | ✅ |
+| 6e-1 | queryRunningInstances all BUSY variants | ✅ |
+| 6e-2 | Skip busyStreak for operational BUSY | ✅ |
+| 6e-3 | updateInstanceState guard + recovery | ✅ |
+| 6e-4 | GetHealthReport Alive check incl BUSY | ✅ |
+| 6e-5 | GetHealthReport Running count incl BUSY | ✅ |
+| 6f | ListRunningSdkNos all BUSY variants | ✅ |
+| 7a | smart_route.go: ResolveSmartRoute + restartAndPoll + spawnSdk | ✅ |
+| 7b | Syncer +sdkMgr field, NewSyncer +sdkMgr param | ✅ |
+| 7c | Syncer doDeviceSync smart route integration | ✅ |
+| 8a | jobRequest +cleanup field | ✅ |
+| 8b | Enqueue smart route restructure | ✅ |
+| 8c | processJob cleanup calls | ✅ |
+| 9a | main.go NewSyncer +sdkMgr wiring | ✅ |
+
+### Files Modified
+- `models/instance.go` — +2 BUSY constants, +IsBusyStatus()
+- `database/migrations.go` — v7→v8, +migrateV8 (max_spawn_sdk)
+- `services/syncer.go` — +sdkMgr, smart route, BUSY lifecycle
+- `services/queue.go` — +models import, +cleanup, smart route, BUSY lifecycle
+- `services/watchdog.go` — +models import, +busyStreak, 5 location updates
+- `services/sdk_manager.go` — ListRunningSdkNos() includes BUSY variants
+- `main.go` — NewSyncer +sdkMgr param
+
+### Files Created
+- `services/smart_route.go` — ResolveSmartRoute(), restartAndPoll(), spawnSdk()
+
+### APIs Modified
+None.
+
+### Protected Areas Verified
+All protected files untouched: fservice.go, handler.go, absen.go, scanlog.go, sync.go, device_ini.go, setdef.go, logger.go, process_windows.go, sys_windows.go, database/database.go, database/absen_migrations.go, models/finger.go, core/, template/, templates/, ui/.
+
+### Build Result
+- `go build ./...` — clean
+- `go vet ./...` — clean
+
+### Regression Result
+- No API changes, no UI changes, no config format changes
+- All existing flows preserved
+- Backward compatible
+
+### Architecture Decisions Added
+- AD-049: BUSY-SCANLOG/USER Operational Variants
+- AD-050: IsBusyStatus() Helper
+- AD-051: Smart Routing Engine (ResolveSmartRoute)
+- AD-052: Async Restart + Polling 30s Max
+- AD-053: Spawn Guard via config max_spawn_sdk
+
+### Memory Updated
+Sections 6, 8, 15, 16, 17, 23 — all ADs registered, protected files/functions listed.
+
+---
+
+## Phase Z: Restruktur doDeviceSync — Syncer Otomatis Scanlog
+
+### Status: ✅ COMPLETED
+
+### Tasks
+| # | Task | Status |
+|---|---|---|
+| Z1 | Hapus cached scanlog_count read | ✅ |
+| Z2 | Hapus idle check lama | ✅ |
+| Z3 | Rewrite Fast Path (newPresensi > 0, final no-fallback) | ✅ |
+| Z4 | Tambah Idle Check Baru (real COUNT(*)) | ✅ |
+| Z5 | Rewrite Full Path (no scanlog_count increment) | ✅ |
+
+### Files Modified
+- `gateway/internal/services/syncer.go` — `doDeviceSync()` full restructure (lines 166-280)
+
+### Build Result
+- `go build ./...` — clean
+- `go vet ./...` — clean
+
+### Regression Result
+- No API changes, no UI changes, no DB schema changes
+- All protected files untouched
+- Backward compatible
+
+### Architecture Decisions Added
+- AD-058: Syncer Fast Path Final — No Fallback
+- AD-059: Syncer Idle Check Position — Real COUNT(*) After Fast Path
+- AD-060: Syncer scanlog_count Update Standard — No Increment
+
+### Memory Updated
+Sections 15, 17 updated; AD-058, AD-059, AD-060 registered.
+
+---
+
+## Phase L: Tambah Log Decision Point di doDeviceSync
+
+### Status: UPDATED (L3: Result=false guard added)
+
+### Tasks
+| # | Task | Status |
+|---|---|---|
+| L1 | Log `dev/info` raw values (allPresensi, newPresensi) | ✅ |
+| L2 | Log full path entry decision (gap count) | ✅ |
+| L2.1 | Log raw `dev/info` JSON (truncated 300 chars) | ✅ |
+| L3 | Guard `dev/info`: skip when `Result=false` | ✅ |
+
+### Files Modified
+- `gateway/internal/services/syncer.go` — +4 log/guard lines in `doDeviceSync()` 
+
+### Lines Changed
+- Line 164-169: `if !devInfo.Result` guard → log "Result=false, skipping" → return
+- Line 173-174: `"dev/info: all=%d new=%d"` after dev/info parse
+- Line 175-179: `"dev/info raw: %s"` truncated 300 chars raw JSON
+- Line 244-246: `"new-presensi=0, gap=%d, using full pagination"` after idle check
+
+### Build Result
+- `go build ./...` — clean
+- `go vet ./...` — clean
+
+### Protected Areas Verified
+No other files touched. Logic, flow, and structure unchanged.

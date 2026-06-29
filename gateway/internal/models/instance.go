@@ -1,10 +1,17 @@
 package models
 
 const (
- StatusStopped = "STOPPED"
- StatusRunning = "RUNNING"
- StatusError   = "ERROR"
+	StatusStopped    = "STOPPED"
+	StatusRunning    = "RUNNING"
+	StatusError      = "ERROR"
+	StatusBusy       = "BUSY"
+	StatusBusyScanlog = "BUSY-SCANLOG"
+	StatusBusyUser   = "BUSY-SCANUSER"
 )
+
+func IsBusyStatus(status string) bool {
+	return status == StatusBusy || status == StatusBusyScanlog || status == StatusBusyUser
+}
 
 type SdkInstance struct {
  ID           int    `json:"id"`

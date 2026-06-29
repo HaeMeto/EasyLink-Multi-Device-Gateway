@@ -1,12 +1,41 @@
 {{define "settings"}}
 <h1 class="text-2xl font-bold mb-4">Settings</h1>
-<div class="bg-white rounded shadow p-6 max-w-lg">
+<div class="bg-white rounded shadow p-6 max-w-lg mb-6">
 <h2 class="font-semibold mb-4">Sync Configuration</h2>
 <div class="flex items-center gap-2">
 <span class="text-sm text-gray-600">Scanlog Sync Interval:</span>
 <input type="number" x-model="syncInterval" class="w-20 border rounded px-2 py-1 text-sm" min="5">
 <span class="text-sm text-gray-500">seconds</span>
 <button @click="saveSyncInterval()" class="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700">Save</button>
+</div>
+</div>
+
+<div class="bg-white rounded shadow p-6 max-w-lg mb-6">
+<h2 class="font-semibold mb-4">FService Configuration</h2>
+<div class="space-y-3">
+<div class="flex items-center gap-2">
+<span class="text-sm text-gray-600 w-36">Use Timeout:</span>
+<input type="number" x-model="setdefUseTimeout" class="w-24 border rounded px-2 py-1 text-sm">
+<span class="text-xs text-gray-400">(-1=disabled)</span>
+</div>
+<div class="flex items-center gap-2">
+<span class="text-sm text-gray-600 w-36">Timeout (ms):</span>
+<input type="number" x-model="setdefTimeout" class="w-24 border rounded px-2 py-1 text-sm" min="1000">
+</div>
+<div class="flex items-center gap-2">
+<span class="text-sm text-gray-600 w-36">Use Auto Restart:</span>
+<input type="number" x-model="setdefUseAutoRestart" class="w-24 border rounded px-2 py-1 text-sm">
+<span class="text-xs text-gray-400">(0=disabled, 1=enabled)</span>
+</div>
+<div class="flex items-center gap-2">
+<span class="text-sm text-gray-600 w-36">Auto Restart Time:</span>
+<input type="text" x-model="setdefValAutoRestart" class="w-24 border rounded px-2 py-1 text-sm">
+<span class="text-xs text-gray-400">(HH:MM)</span>
+</div>
+<div class="pt-2">
+<button @click="saveSetDefConfig()" class="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700">Save & Apply to All SDKs</button>
+</div>
+<p class="text-xs text-gray-500 mt-2">Running SDKs will be restarted. BUSY-SCANLOG/USER will restart after completion.</p>
 </div>
 </div>
 {{end}}

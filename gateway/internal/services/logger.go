@@ -23,6 +23,7 @@ type EventLogger struct {
  subscribers map[int]chan []byte
  subID int
  subMu sync.Mutex
+ fileLogger *FileLogger
 }
 
 func NewEventLogger(maxSize int) *EventLogger {
@@ -31,6 +32,10 @@ func NewEventLogger(maxSize int) *EventLogger {
  maxSize: maxSize,
  subscribers: make(map[int]chan []byte),
  }
+}
+
+func (el *EventLogger) SetFileLogger(fl *FileLogger) {
+ el.fileLogger = fl
 }
 
 func (el *EventLogger) Log(typ, message string) {
@@ -49,6 +54,10 @@ func (el *EventLogger) Log(typ, message string) {
  el.mu.Unlock()
 
  el.broadcast(entry)
+
+ if el.fileLogger != nil {
+ el.fileLogger.Write(entry)
+ }
 }
 
 func (el *EventLogger) GetAll() []LogEntry {

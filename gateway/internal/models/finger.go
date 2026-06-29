@@ -1,6 +1,9 @@
 package models
 
-import "strconv"
+import (
+ "encoding/json"
+ "strconv"
+)
 
 type ScanlogEntry struct {
 	ID         int    `json:"id"`
@@ -50,7 +53,7 @@ type UserEntry struct {
 	Name      string          `json:"Name"`
 	RFID      string          `json:"RFID"`
 	Password  string          `json:"Password"`
-	Privilege string          `json:"Privilege"`
+ Privilege int `json:"Privilege"`
 	CreatedAt string          `json:"created_at"`
 	Templates []TemplateEntry `json:"Template,omitempty"`
 }
@@ -62,10 +65,27 @@ type UserPagingResponse struct {
 }
 
 type TemplateEntry struct {
-	FingerIdx string `json:"idx"`
-	Pin       string `json:"pin"`
-	AlgVer    string `json:"alg_ver"`
-	Template  string `json:"template"`
+ FingerIdx int `json:"idx"`
+ Pin string `json:"pin"`
+ AlgVer int `json:"alg_ver"`
+ Template string `json:"template"`
+}
+
+func (t *TemplateEntry) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		FingerIdx json.Number `json:"idx"`
+		Pin       string      `json:"pin"`
+		AlgVer    json.Number `json:"alg_ver"`
+		Template  string      `json:"template"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	t.Pin = raw.Pin
+	t.Template = raw.Template
+	t.FingerIdx, _ = strconv.Atoi(raw.FingerIdx.String())
+	t.AlgVer, _ = strconv.Atoi(raw.AlgVer.String())
+	return nil
 }
 
 type AbsenDeviceInfo struct {

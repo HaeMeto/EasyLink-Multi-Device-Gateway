@@ -19,13 +19,16 @@ import (
 )
 
 type SdkManager struct {
-	db            *database.DB
-	template      embed.FS
-	instancesPath string
-	startPort     int
-	syncService   *SyncService
-	logger        *EventLogger
-	mu            sync.Mutex
+ db *database.DB
+ template embed.FS
+ instancesPath string
+ startPort int
+ syncService *SyncService
+ logger *EventLogger
+ mu sync.Mutex
+
+ pendingSetDef map[int]bool
+ pendingSetDefMu sync.Mutex
 }
 
 type InstanceStatus struct {
@@ -44,6 +47,7 @@ func NewSdkManager(db *database.DB, template embed.FS, instancesPath string, sta
  startPort: startPort,
  syncService: syncService,
  logger: logger,
+ pendingSetDef: make(map[int]bool),
  }
 }
 
@@ -69,7 +73,7 @@ func (m *SdkManager) Create(sdkNo int, port int) (*models.SdkInstance, error) {
  return nil, fmt.Errorf("extract template: %w", err)
  }
 
- if err := WriteSetDef(dst+"\\SetDef.fin", port); err != nil {
+ if err := WriteSetDef(dst+"\\SetDef.fin", port, m.db); err != nil {
  os.RemoveAll(dst)
  return nil, fmt.Errorf("write SetDef.fin: %w", err)
  }
@@ -356,16 +360,22 @@ func (m *SdkManager) Restart(sdkNo int) error {
 		time.Sleep(500 * time.Millisecond)
 	}
 
-	ldbPath := filepath.Join(inst.Path, "db_temp.ldb")
-	os.Remove(ldbPath)
-	os.Remove(filepath.Join(inst.Path, "db_temp.laccdb"))
-	os.Remove(filepath.Join(inst.Path, "db_temp.lock"))
-	templateContent, err := m.template.ReadFile("template/db_temp.mdb")
-	if err == nil {
-		os.WriteFile(filepath.Join(inst.Path, "db_temp.mdb"), templateContent, 0644)
-	}
+ ldbPath := filepath.Join(inst.Path, "db_temp.ldb")
+ os.Remove(ldbPath)
+ os.Remove(filepath.Join(inst.Path, "db_temp.laccdb"))
+ os.Remove(filepath.Join(inst.Path, "db_temp.lock"))
+ templateContent, err := m.template.ReadFile("template/db_temp.mdb")
+ if err == nil {
+ os.WriteFile(filepath.Join(inst.Path, "db_temp.mdb"), templateContent, 0644)
+ }
 
-	if err := m.startLocked(sdkNo); err != nil {
+ if err := WriteSetDef(filepath.Join(inst.Path, "SetDef.fin"), inst.Port, m.db); err != nil {
+ if m.logger != nil {
+ m.logger.Log("instance", fmt.Sprintf("sdk-%d rewrite SetDef.fin failed: %v", sdkNo, err))
+ }
+ }
+
+ if err := m.startLocked(sdkNo); err != nil {
 		return fmt.Errorf("restart start: %w", err)
 	}
 
@@ -380,7 +390,7 @@ func (m *SdkManager) Restart(sdkNo int) error {
 }
 
 func (m *SdkManager) ListRunningSdkNos() []int {
- rows, err := m.db.Query("SELECT sdk_no FROM sdk_instances WHERE status = ?", models.StatusRunning)
+	rows, err := m.db.Query("SELECT sdk_no FROM sdk_instances WHERE status IN (?, ?, ?, ?)", models.StatusRunning, models.StatusBusy, models.StatusBusyScanlog, models.StatusBusyUser)
  if err != nil {
  return nil
  }
@@ -495,4 +505,85 @@ func (m *SdkManager) extractTemplate(dst string) error {
 
  return nil
  })
+}
+
+func (m *SdkManager) InjectSetDefAll() []string {
+ var logs []string
+ rows, err := m.db.Query("SELECT sdk_no, path, port, status FROM sdk_instances")
+ if err != nil {
+ return []string{"query instances: " + err.Error()}
+ }
+ defer rows.Close()
+
+ type inst struct {
+ sdkNo int
+ path string
+ port int
+ status string
+ }
+ var instances []inst
+ for rows.Next() {
+ var i inst
+ if rows.Scan(&i.sdkNo, &i.path, &i.port, &i.status) != nil {
+ continue
+ }
+ instances = append(instances, i)
+ }
+
+ for _, inst := range instances {
+ if inst.status == models.StatusBusyScanlog || inst.status == models.StatusBusyUser {
+ if err := WriteSetDef(filepath.Join(inst.path, "SetDef.fin"), inst.port, m.db); err != nil {
+ logs = append(logs, fmt.Sprintf("sdk-%d: rewrite SetDef.fin failed: %v", inst.sdkNo, err))
+ } else {
+ logs = append(logs, fmt.Sprintf("sdk-%d: SetDef.fin updated, pending restart after operation completes", inst.sdkNo))
+ }
+ m.MarkPendingSetDef(inst.sdkNo)
+ continue
+ }
+
+ if err := WriteSetDef(filepath.Join(inst.path, "SetDef.fin"), inst.port, m.db); err != nil {
+ logs = append(logs, fmt.Sprintf("sdk-%d: rewrite SetDef.fin failed: %v", inst.sdkNo, err))
+ continue
+ }
+
+ shouldRestart := inst.status == models.StatusRunning || inst.status == models.StatusBusy
+ shouldStart := inst.status == models.StatusStopped
+
+ if shouldRestart {
+ if m.logger != nil {
+ m.logger.Log("instance", fmt.Sprintf("sdk-%d: SetDef.fin updated, restarting", inst.sdkNo))
+ }
+ if err := m.Restart(inst.sdkNo); err != nil {
+ logs = append(logs, fmt.Sprintf("sdk-%d: restart failed: %v", inst.sdkNo, err))
+ } else {
+ logs = append(logs, fmt.Sprintf("sdk-%d: SetDef.fin updated + restarted", inst.sdkNo))
+ }
+ } else if shouldStart {
+ if err := m.Start(inst.sdkNo); err != nil {
+ logs = append(logs, fmt.Sprintf("sdk-%d: start failed: %v", inst.sdkNo, err))
+ } else {
+ logs = append(logs, fmt.Sprintf("sdk-%d: SetDef.fin updated + started", inst.sdkNo))
+ }
+ } else {
+ logs = append(logs, fmt.Sprintf("sdk-%d: SetDef.fin updated", inst.sdkNo))
+ }
+ }
+
+ return logs
+}
+
+func (m *SdkManager) MarkPendingSetDef(sdkNo int) {
+ m.pendingSetDefMu.Lock()
+ defer m.pendingSetDefMu.Unlock()
+ m.pendingSetDef[sdkNo] = true
+}
+
+func (m *SdkManager) ConsumePendingSetDef(sdkNo int) bool {
+ m.pendingSetDefMu.Lock()
+ defer m.pendingSetDefMu.Unlock()
+ pending := m.pendingSetDef[sdkNo]
+ if pending {
+ delete(m.pendingSetDef, sdkNo)
+ }
+ return pending
 }

@@ -2,7 +2,7 @@ package database
 
 import "fmt"
 
-const currentVersion = 6
+const currentVersion = 9
 
 func (db *DB) Migrate() error {
  _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_version (
@@ -43,6 +43,12 @@ func (db *DB) runMigration(version int) error {
 		err = db.migrateV5()
 	case 6:
 		err = db.migrateV6()
+	case 7:
+		err = db.migrateV7()
+	case 8:
+		err = db.migrateV8()
+	case 9:
+		err = db.migrateV9()
 	default:
  return fmt.Errorf("unknown migration version %d", version)
  }
@@ -173,6 +179,33 @@ func (db *DB) migrateV5() error {
 }
 
 func (db *DB) migrateV6() error {
- _, err := db.Exec(`INSERT OR IGNORE INTO config (key, value) VALUES ('user_sync_limit', '30')`)
+	_, err := db.Exec(`INSERT OR IGNORE INTO config (key, value) VALUES ('user_sync_limit', '10')`)
+	return err
+}
+
+func (db *DB) migrateV7() error {
+	_, err := db.Exec(`INSERT OR IGNORE INTO config (key, value) VALUES ('user_sync_mitigation_wait_seconds', '60')`)
+	return err
+}
+
+func (db *DB) migrateV8() error {
+ _, err := db.Exec(`INSERT OR IGNORE INTO config (key, value) VALUES ('max_spawn_sdk', '10')`)
+ return err
+}
+
+func (db *DB) migrateV9() error {
+ _, err := db.Exec(`INSERT OR IGNORE INTO config (key, value) VALUES ('setdef_use_timeout', '-1')`)
+ if err != nil {
+ return err
+ }
+ _, err = db.Exec(`INSERT OR IGNORE INTO config (key, value) VALUES ('setdef_timeout', '5000')`)
+ if err != nil {
+ return err
+ }
+ _, err = db.Exec(`INSERT OR IGNORE INTO config (key, value) VALUES ('setdef_use_auto_restart', '0')`)
+ if err != nil {
+ return err
+ }
+ _, err = db.Exec(`INSERT OR IGNORE INTO config (key, value) VALUES ('setdef_val_auto_restart', '23:00')`)
  return err
 }

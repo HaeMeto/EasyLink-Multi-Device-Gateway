@@ -1,11 +1,19 @@
 {{define "logs"}}
 <h1 class="text-2xl font-bold mb-4">Console Logs</h1>
-<div class="bg-gray-900 text-green-400 font-mono text-xs p-4 overflow-y-auto rounded" style="height:calc(100vh-12rem)" x-ref="logContainer">
-<template x-if="store.logs.length===0"><div class="text-gray-500">No logs yet</div></template>
-<template x-for="l in store.logs" :key="l.id">
+<div class="flex items-center gap-3 mb-3">
+<input type="date" x-model="historyDate" class="border rounded px-2 py-1 text-sm">
+<button @click="loadLogHistory()" class="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700">Load</button>
+<button @click="switchToLive()" x-show="logMode==='history'" class="px-3 py-1 text-sm bg-gray-600 text-white rounded hover:bg-gray-700">Live</button>
+<span class="text-sm text-gray-500" x-text="logMode==='history' ? 'History: '+historyDate : 'Live'"></span>
+</div>
+<div class="bg-gray-900 text-green-400 font-mono text-xs p-4 overflow-y-auto rounded" style="height:calc(100vh-15rem)" x-ref="logContainer">
+<template x-if="(logMode==='live' ? store.logs : historyLogs).length===0">
+<div class="text-gray-500" x-text="logMode==='history' ? 'No logs for this date' : 'No logs yet'"></div>
+</template>
+<template x-for="l in (logMode==='live' ? store.logs : historyLogs)" :key="l.id">
 <div class="py-0.5 flex gap-2">
 <span class="text-gray-500" x-text="l.timestamp"></span>
-<span class="font-semibold" :class="l.type === 'instance' ? 'text-blue-400' : l.type === 'device' ? 'text-yellow-400' : l.type === 'proxy' ? 'text-green-400' : l.type === 'watchdog' ? 'text-red-400' : 'text-gray-400'" x-text="'['+l.type+']'"></span>
+<span class="font-semibold" :class="l.type && l.type.startsWith('sdk') ? 'text-cyan-400' : l.type === 'instance' ? 'text-blue-400' : l.type === 'device' ? 'text-yellow-400' : l.type === 'proxy' ? 'text-green-400' : l.type === 'watchdog' ? 'text-red-400' : 'text-gray-400'" x-text="'['+l.type+']'"></span>
 <span x-text="l.message"></span>
 </div>
 </template>

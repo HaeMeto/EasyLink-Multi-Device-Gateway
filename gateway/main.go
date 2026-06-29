@@ -10,9 +10,11 @@ import (
  "html/template"
  "io/fs"
  "log"
+ "math/rand"
  "net/http"
  "os"
  "os/signal"
+ "path/filepath"
  gosync "sync"
  "syscall"
  "time"
@@ -81,6 +83,13 @@ func main() {
 
  eventLogger := services.NewEventLogger(500)
 
+ fileLogger, err := services.NewFileLogger(filepath.Join(filepath.Dir(cfg.DBPath), "logs"))
+ if err != nil {
+ log.Printf("file logger warning: %v", err)
+ } else {
+ eventLogger.SetFileLogger(fileLogger)
+ }
+
  sync := services.NewSyncService(db, cfg.RootDeviceIniPath)
  if _, err := os.Stat(cfg.RootDeviceIniPath); os.IsNotExist(err) {
  os.WriteFile(cfg.RootDeviceIniPath, nil, 0644)
@@ -114,7 +123,7 @@ func main() {
  }
  }
 
- proxy := services.NewFServiceProxy()
+ proxy := services.NewFServiceProxy(eventLogger)
 
  deviceLookup := func(sn string) (sdkNo int, port int, err error) {
  err = db.QueryRow(
@@ -125,14 +134,30 @@ func main() {
  if err != nil {
  return 0, 0, fmt.Errorf("device %s not found: %w", sn, err)
  }
- if sdkNo == 0 {
- err = db.QueryRow(
- "SELECT sdk_no, port FROM sdk_instances WHERE status = 'RUNNING' ORDER BY sdk_no LIMIT 1",
- ).Scan(&sdkNo, &port)
- if err != nil {
- return 0, 0, fmt.Errorf("device %s not assigned and no instance available", sn)
- }
- }
+	if sdkNo == 0 {
+		rows, err := db.Query("SELECT sdk_no, port FROM sdk_instances WHERE status = 'RUNNING'")
+		if err != nil {
+			return 0, 0, fmt.Errorf("device %s not assigned and no instance available", sn)
+		}
+		defer rows.Close()
+		type instRow struct {
+			sdkNo int
+			port  int
+		}
+		var insts []instRow
+		for rows.Next() {
+			var r instRow
+			if rows.Scan(&r.sdkNo, &r.port) == nil {
+				insts = append(insts, r)
+			}
+		}
+		if len(insts) == 0 {
+			return 0, 0, fmt.Errorf("device %s not assigned and no instance available", sn)
+		}
+		pick := insts[rand.Intn(len(insts))]
+		sdkNo = pick.sdkNo
+		port = pick.port
+	}
  if port == 0 {
  return 0, 0, fmt.Errorf("device %s instance port not found", sn)
  }
@@ -140,11 +165,11 @@ func main() {
  }
 
  jr := &jobRecorder{db: db}
-	queue := services.NewQueueManager(proxy, absenDB, jr, deviceLookup, eventLogger)
+	queue := services.NewQueueManager(proxy, absenDB, jr, deviceLookup, eventLogger, sdkMgr, db)
 
 	wd := services.NewWatchdog(cfg.WatchdogDuration(), db, sdkMgr, queue, proxy, eventLogger)
 
- syncer := services.NewSyncer(db, absenDB, proxy, deviceLookup, eventLogger, wd)
+	syncer := services.NewSyncer(db, absenDB, proxy, deviceLookup, eventLogger, wd, sdkMgr)
 
 	h := &handlers.Handler{
 		DB:       db,
@@ -152,10 +177,11 @@ func main() {
 		Proxy:    proxy,
 		SdkMgr:   sdkMgr,
 		Sync:     sync,
-		Queue:    queue,
-		Watchdog: wd,
-		Logger:   eventLogger,
-	}
+ Queue: queue,
+ Watchdog: wd,
+ Logger: eventLogger,
+ FileLogger: fileLogger,
+ }
 
  mux := http.NewServeMux()
 
@@ -205,13 +231,16 @@ func main() {
 	mux.HandleFunc("POST /api/test/device-info", h.HandleTestDeviceInfo)
 
 	mux.HandleFunc("GET /api/config", h.HandleGetConfig)
-	mux.HandleFunc("PUT /api/config", h.HandlePutConfig)
+ mux.HandleFunc("PUT /api/config", h.HandlePutConfig)
+
+ mux.HandleFunc("POST /api/settings/setdef", h.HandleSetDefSettings)
 
  mux.HandleFunc("POST /api/sync/reload", h.HandleSyncReload)
  mux.HandleFunc("GET /api/sync/status", h.HandleSyncStatus)
  mux.HandleFunc("GET /api/jobs", h.HandleJobs)
  mux.HandleFunc("GET /api/logs", h.HandleLogs)
  mux.HandleFunc("GET /api/logs/stream", h.HandleLogStream)
+ mux.HandleFunc("GET /api/logs/history", h.HandleLogHistory)
 
  tmplFS, err := fs.Sub(templatesFS, "templates")
  if err != nil {
@@ -287,6 +316,10 @@ func main() {
  eventLogger.Log("system", "shutting down")
  cancel()
  eventLogger.Close()
+
+ if fileLogger != nil {
+ fileLogger.Close()
+ }
 
  runningSdkNos := sdkMgr.ListRunningSdkNos()
  var wg gosync.WaitGroup

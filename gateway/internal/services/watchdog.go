@@ -1,20 +1,22 @@
 package services
 
 import (
- "bytes"
- "context"
- "encoding/json"
- "fmt"
- "io"
- "log"
- "net"
- "net/http"
- "os"
- "path/filepath"
- "sync"
- "time"
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
 
- "easylink/gateway/internal/database"
+	"easylink/gateway/internal/database"
+	"easylink/gateway/internal/models"
 )
 
 var errBusy = fmt.Errorf("busy")
@@ -42,29 +44,32 @@ type HealthInstance struct {
 }
 
 type Watchdog struct {
- tickCount int
- interval time.Duration
- db *database.DB
- sdkMgr *SdkManager
- queueMgr *QueueManager
- proxy *FServiceProxy
- logger *EventLogger
- instanceFailCount map[int]int
- busyCooldown map[string]time.Time
- cooldownMu sync.RWMutex
+	tickCount int
+	interval time.Duration
+	db *database.DB
+	sdkMgr *SdkManager
+	queueMgr *QueueManager
+	proxy *FServiceProxy
+	logger *EventLogger
+	instanceFailCount map[int]int
+	busyCooldown map[string]time.Time
+	cooldownMu sync.RWMutex
+	busyStreak map[string]int
+	busyStreakMu sync.Mutex
 }
 
 func NewWatchdog(interval time.Duration, db *database.DB, sdkMgr *SdkManager, queueMgr *QueueManager, proxy *FServiceProxy, logger *EventLogger) *Watchdog {
- return &Watchdog{
- interval: interval,
- db: db,
- sdkMgr: sdkMgr,
- queueMgr: queueMgr,
- proxy: proxy,
- logger: logger,
- instanceFailCount: make(map[int]int),
- busyCooldown: make(map[string]time.Time),
- }
+	return &Watchdog{
+		interval: interval,
+		db: db,
+		sdkMgr: sdkMgr,
+		queueMgr: queueMgr,
+		proxy: proxy,
+		logger: logger,
+		instanceFailCount: make(map[int]int),
+		busyCooldown: make(map[string]time.Time),
+		busyStreak: make(map[string]int),
+	}
 }
 
 func (w *Watchdog) Start(ctx context.Context) {
@@ -109,8 +114,7 @@ func (w *Watchdog) tick() {
 
 func (w *Watchdog) queryRunningInstances() []runningInstance {
 	rows, err := w.db.Query(
-		"SELECT sdk_no, port, pid, path FROM sdk_instances WHERE status = ?",
-		"RUNNING",
+		"SELECT sdk_no, port, pid, path FROM sdk_instances WHERE status IN ('RUNNING', 'BUSY', 'BUSY-SCANLOG', 'BUSY-SCANUSER')",
 	)
 	if err != nil {
 		log.Printf("watchdog: query instances: %v", err)
@@ -211,21 +215,32 @@ func (w *Watchdog) checkDevicesForInstance(sdkNo int, port int) {
 	}
 	rows.Close()
 
- for _, d := range devices {
- if d.online == 0 && d.lastOffline != "" {
- t, parseErr := time.Parse("2006-01-02 15:04:05", d.lastOffline)
- if parseErr == nil && time.Since(t) < 30*time.Minute {
- continue
- }
- w.db.Exec("UPDATE devices SET online = 1, fail_count = 0 WHERE id = ?", d.id)
- }
+	var instStatus string
+	w.db.QueryRow("SELECT status FROM sdk_instances WHERE sdk_no = ?", sdkNo).Scan(&instStatus)
 
- if w.IsDeviceInCooldown(d.sn) {
- continue
- }
+	var busyCount, errorCount, timeoutCount, okCount, totalChecked int
 
- err := w.checkDeviceHealth(port, d.sn)
- if err == nil {
+	for _, d := range devices {
+		if d.online == 0 && d.lastOffline != "" {
+			t, parseErr := time.Parse("2006-01-02 15:04:05", d.lastOffline)
+			if parseErr == nil && time.Since(t) < 30*time.Minute {
+				continue
+			}
+			w.db.Exec("UPDATE devices SET online = 1, fail_count = 0 WHERE id = ?", d.id)
+		}
+
+		if w.IsDeviceInCooldown(d.sn) {
+			continue
+		}
+
+		totalChecked++
+
+		err := w.checkDeviceHealth(port, d.sn)
+		if err == nil {
+			okCount++
+			w.busyStreakMu.Lock()
+			delete(w.busyStreak, d.sn)
+			w.busyStreakMu.Unlock()
 			w.db.Exec("UPDATE devices SET fail_count = 0, online = 1, last_offline = '' WHERE id = ?", d.id)
 			if d.failCount > 0 {
 				log.Printf("watchdog: [device] sn=%s dev=%d sdk=%d recovered (was fail %d)", d.sn, d.id, sdkNo, d.failCount)
@@ -238,13 +253,51 @@ func (w *Watchdog) checkDevicesForInstance(sdkNo int, port int) {
 					w.logger.Log("watchdog", fmt.Sprintf("[device] sdk-%d %s back online (retry)", sdkNo, d.sn))
 				}
 			}
- } else if err == errBusy {
- w.MarkDeviceBusy(d.sn)
- log.Printf("watchdog: [device] sn=%s dev=%d sdk=%d busy", d.sn, d.id, sdkNo)
+		} else if err == errBusy {
+			busyCount++
+			if models.IsBusyStatus(instStatus) {
+				w.MarkDeviceBusy(d.sn)
+				log.Printf("watchdog: [device] sn=%s dev=%d sdk=%d instance BUSY (operational), skipping streak", d.sn, d.id, sdkNo)
+				if w.logger != nil {
+					w.logger.Log("watchdog", fmt.Sprintf("[device] sdk-%d %s instance BUSY (operational), skipping streak", sdkNo, d.sn))
+				}
+				continue
+			}
+			w.busyStreakMu.Lock()
+			w.busyStreak[d.sn]++
+			streak := w.busyStreak[d.sn]
+			w.busyStreakMu.Unlock()
+			if streak >= 3 {
+				log.Printf("watchdog: sdk-%d %s busy streak=%d, restarting instance", sdkNo, d.sn, streak)
+				if w.logger != nil {
+					w.logger.Log("watchdog", fmt.Sprintf("sdk-%d %s busy streak=%d, restarting instance", sdkNo, d.sn, streak))
+				}
+				go w.recoverInstance(sdkNo)
+				w.busyStreakMu.Lock()
+				delete(w.busyStreak, d.sn)
+				w.busyStreakMu.Unlock()
+				continue
+			}
+			w.MarkDeviceBusy(d.sn)
+			log.Printf("watchdog: [device] sn=%s dev=%d sdk=%d busy [streak %d/3]", d.sn, d.id, sdkNo, streak)
 			if w.logger != nil {
-				w.logger.Log("watchdog", fmt.Sprintf("[device] sdk-%d %s busy", sdkNo, d.sn))
+				w.logger.Log("watchdog", fmt.Sprintf("[device] sdk-%d %s busy [streak %d/3]", sdkNo, d.sn, streak))
 			}
 		} else {
+			if isTimeoutError(err) {
+				timeoutCount++
+				errorCount++
+				w.instanceFailCount[sdkNo] += 2
+				log.Printf("watchdog: [device] sn=%s dev=%d sdk=%d timeout (hang?), instance fail %d/3", d.sn, d.id, sdkNo, w.instanceFailCount[sdkNo])
+				if w.logger != nil {
+					w.logger.Log("watchdog", fmt.Sprintf("[device] sdk-%d %s timeout (hang?), instance fail %d/3", sdkNo, d.sn, w.instanceFailCount[sdkNo]))
+				}
+				if w.instanceFailCount[sdkNo] >= 3 {
+					go w.recoverInstance(sdkNo)
+				}
+				continue
+			}
+			errorCount++
 			newCount := d.failCount + 1
 			w.db.Exec("UPDATE devices SET fail_count = ? WHERE id = ?", newCount, d.id)
 			if newCount >= 5 {
@@ -261,6 +314,8 @@ func (w *Watchdog) checkDevicesForInstance(sdkNo int, port int) {
 			}
 		}
 	}
+
+	w.updateInstanceState(sdkNo, busyCount, errorCount, timeoutCount, okCount, totalChecked)
 }
 
 func (w *Watchdog) checkDeviceHealth(port int, sn string) error {
@@ -355,11 +410,83 @@ func (w *Watchdog) recoverInstance(sdkNo int) error {
 
 	delete(w.instanceFailCount, sdkNo)
 
+	rows, _ := w.db.Query("SELECT sn FROM devices WHERE sdk_no = ?", sdkNo)
+	var instSNs []string
+	if rows != nil {
+		for rows.Next() {
+			var sn string
+			if rows.Scan(&sn) == nil {
+				instSNs = append(instSNs, sn)
+			}
+		}
+ rows.Close()
+ }
+ for _, sn := range instSNs {
+ w.db.Exec("UPDATE devices SET online = 1, last_offline = '' WHERE sn = ?", sn)
+ }
+ var port int
+ if err := w.db.QueryRow("SELECT port FROM sdk_instances WHERE sdk_no = ?", sdkNo).Scan(&port); err == nil {
+ recheckOK := 0
+ for _, sn := range instSNs {
+ if w.checkDeviceHealth(port, sn) == nil {
+ w.db.Exec("UPDATE devices SET fail_count = 0, online = 1, last_offline = '' WHERE sn = ?", sn)
+ recheckOK++
+ }
+ }
+ log.Printf("watchdog: sdk-%d recovered: %d/%d devices re-checked OK", sdkNo, recheckOK, len(instSNs))
+ if w.logger != nil {
+ w.logger.Log("watchdog", fmt.Sprintf("sdk-%d recovered: %d/%d devices re-checked OK", sdkNo, recheckOK, len(instSNs)))
+ }
+ }
+ w.busyStreakMu.Lock()
+	for _, sn := range instSNs {
+		delete(w.busyStreak, sn)
+	}
+	w.busyStreakMu.Unlock()
+
 	log.Printf("watchdog: instance %d recovered", sdkNo)
 	if w.logger != nil {
 		w.logger.Log("watchdog", fmt.Sprintf("Recovered sdk-%d", sdkNo))
 	}
 	return nil
+}
+
+func isTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "context deadline exceeded") ||
+		strings.Contains(msg, "Client.Timeout exceeded") ||
+		strings.Contains(msg, "i/o timeout")
+}
+
+func (w *Watchdog) updateInstanceState(sdkNo int, busyCount int, errorCount int, timeoutCount int, okCount int, totalChecked int) {
+	if totalChecked == 0 {
+		return
+	}
+
+	var currentStatus string
+	w.db.QueryRow("SELECT status FROM sdk_instances WHERE sdk_no = ?", sdkNo).Scan(&currentStatus)
+
+	if busyCount == totalChecked && currentStatus == models.StatusRunning {
+		w.db.Exec("UPDATE sdk_instances SET status = ? WHERE sdk_no = ?", models.StatusBusy, sdkNo)
+		w.queueMgr.SetWorkerStatus(sdkNo, WorkerBusy)
+		log.Printf("watchdog: sdk-%d status %s->BUSY (all %d devices busy)", sdkNo, currentStatus, totalChecked)
+		if w.logger != nil {
+			w.logger.Log("watchdog", fmt.Sprintf("sdk-%d status %s->BUSY (all %d devices busy)", sdkNo, currentStatus, totalChecked))
+		}
+		return
+	}
+
+	if okCount > 0 && models.IsBusyStatus(currentStatus) {
+		w.db.Exec("UPDATE sdk_instances SET status = ? WHERE sdk_no = ?", models.StatusRunning, sdkNo)
+		w.queueMgr.SetWorkerStatus(sdkNo, WorkerIdle)
+		log.Printf("watchdog: sdk-%d status %s->RUNNING (recovered, %d/%d devices OK)", sdkNo, currentStatus, okCount, totalChecked)
+		if w.logger != nil {
+			w.logger.Log("watchdog", fmt.Sprintf("sdk-%d status %s->RUNNING (recovered, %d/%d devices OK)", sdkNo, currentStatus, okCount, totalChecked))
+		}
+	}
 }
 
 func (w *Watchdog) GetHealthReport() HealthReport {
@@ -395,7 +522,7 @@ func (w *Watchdog) GetHealthReport() HealthReport {
 			PID:    inst.pid,
 			Status: inst.status,
 		}
-		if hi.Status == "RUNNING" {
+		if hi.Status == models.StatusRunning || models.IsBusyStatus(hi.Status) {
 			hi.Alive = isProcessAlive(hi.PID)
 			hi.PortOpen = w.checkPort(hi.Port) == nil
 			w.db.QueryRow(
@@ -415,6 +542,8 @@ func (w *Watchdog) GetHealthReport() HealthReport {
 		report.Total++
 		switch h.Status {
 		case "RUNNING":
+			report.Running++
+		case "BUSY", "BUSY-SCANLOG", "BUSY-SCANUSER":
 			report.Running++
 		case "STOPPED":
 			report.Stopped++

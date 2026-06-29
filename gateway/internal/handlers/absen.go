@@ -1,10 +1,13 @@
 package handlers
 
 import (
- "encoding/json"
- "fmt"
- "net/http"
- "strconv"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"strconv"
+
+	"easylink/gateway/internal/services"
 )
 
 func (h *Handler) HandleAbsenScanLogs(w http.ResponseWriter, r *http.Request) {
@@ -179,7 +182,7 @@ func (h *Handler) HandleAbsenSyncUsers(w http.ResponseWriter, r *http.Request) {
  return
  }
 
- configLimit := 30
+	configLimit := 10
  var cfgVal string
  if err := h.DB.QueryRow("SELECT value FROM config WHERE key = 'user_sync_limit'").Scan(&cfgVal); err == nil {
  if n, e := strconv.Atoi(cfgVal); e == nil && n > 0 {
@@ -190,6 +193,7 @@ func (h *Handler) HandleAbsenSyncUsers(w http.ResponseWriter, r *http.Request) {
  var req struct {
  SdkNo int `json:"sdk_no"`
  Limit int `json:"limit"`
+ DeviceUsers int `json:"device_users"`
  }
  if r.Body != nil {
  json.NewDecoder(r.Body).Decode(&req)
@@ -205,11 +209,17 @@ func (h *Handler) HandleAbsenSyncUsers(w http.ResponseWriter, r *http.Request) {
  h.AbsenDB.QueryRow("SELECT COALESCE(user_count, 0) FROM device_info WHERE sn = ?", sn).Scan(&dbCount)
  h.AbsenDB.QueryRow("SELECT COUNT(*) FROM \"user\" WHERE sn = ?", sn).Scan(&localCount)
  if dbCount > 0 && dbCount == localCount {
+ if req.DeviceUsers > 0 && req.DeviceUsers != localCount {
+ if h.Logger != nil {
+ h.Logger.Log("proxy", fmt.Sprintf("force user sync bypass guard: device=%d local=%d", req.DeviceUsers, localCount))
+ }
+ } else {
  h.writeJSON(w, http.StatusOK, map[string]interface{}{
  "status": "already_synced",
  "user_count": dbCount,
  })
  return
+ }
  }
  }
 
@@ -233,13 +243,19 @@ func (h *Handler) HandleAbsenSyncUsers(w http.ResponseWriter, r *http.Request) {
  h.writeError(w, http.StatusServiceUnavailable, "absen db not available")
  return
  }
- data, err := h.Proxy.SyncUsersFull(h.AbsenDB, port, sn, limit, h.Logger)
- if err != nil {
- h.writeError(w, http.StatusBadGateway, err.Error())
- return
- }
- h.writeRawJSON(w, http.StatusOK, data)
- return
+ data, err := h.Proxy.SyncUsersFull(h.AbsenDB, port, sn, limit, req.SdkNo, h.Logger)
+		if errors.Is(err, services.ErrFServiceBusy) {
+			if h.Logger != nil {
+				h.Logger.Log("proxy", fmt.Sprintf("%s user sync busy → mitigation (direct)", sn))
+			}
+			data, err = services.MitigateUserSyncBusy(h.Proxy, h.AbsenDB, h.SdkMgr, h.DB, sn, limit, h.Logger)
+		}
+		if err != nil {
+			h.writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		h.writeRawJSON(w, http.StatusOK, data)
+		return
  }
 
  params := map[string][]string{}
@@ -445,7 +461,11 @@ func (h *Handler) HandleAbsenCompare(w http.ResponseWriter, r *http.Request) {
  User string `json:"User"`
  } `json:"DEVINFO"`
  }
- if json.Unmarshal(infoData, &devInfo) == nil {
+ if err := json.Unmarshal(infoData, &devInfo); err != nil {
+ if h.Logger != nil {
+ h.Logger.Log("proxy", fmt.Sprintf("%s dev/info parse failed in compare: %v", sn, err))
+ }
+ } else {
  if n, e := strconv.Atoi(devInfo.DEVINFO.AllPresensi); e == nil {
  deviceScanlog = n
  }
